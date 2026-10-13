@@ -1,0 +1,233 @@
+From dcd4cef3500c1c21f96662be0dbe134b4f10998c Mon Sep 17 00:00:00 2001
+From: Tinkerworkss <Tinkerworkss@users.noreply.github.com>
+Date: Tue, 13 Oct 2026 18:27:47 +0200
+Subject: [PATCH] Repos in der Organisation Taleward (Worker 0.2.1)
+
+Adressen auf github.com/Taleward umgestellt. Freigaben der eigenen Repos gelten
+unter dem neuen und dem bisherigen Namen, sonst nur mit genau passendem Repo.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013CssQZuRBCpCJdqrK2dJvj
+---
+ README.md                             | 10 +++++-----
+ install-linux.sh                      |  4 ++--
+ packaging/pruefe-ki-paket.sh          |  2 +-
+ packaging/taleward-worker.spec        |  2 +-
+ packaging/windows/taleward-worker.iss |  2 +-
+ pyproject.toml                        |  2 +-
+ taleward_worker/__init__.py           |  6 +++---
+ taleward_worker/freigabe.py           | 22 ++++++++++++++++++++--
+ tests/test_freigabe.py                | 25 ++++++++++++++++++++++---
+ uv.lock                               |  2 +-
+ 10 files changed, 57 insertions(+), 20 deletions(-)
+
+diff --git a/README.md b/README.md
+index 4817598..cb66647 100644
+--- a/README.md
++++ b/README.md
+@@ -8,5 +8,5 @@ kann irgendwo laufen, etwa auf einem gemieteten Server oder einem Raspberry Pi.
+ im Router muss nichts freigegeben werden.
+ 
+-Der Server liegt unter [taleward-server](https://github.com/Tinkerworkss/taleward-server).
++Der Server liegt unter [taleward-server](https://github.com/Taleward/taleward-server).
+ 
+ ## Installieren
+@@ -14,5 +14,5 @@ Der Server liegt unter [taleward-server](https://github.com/Tinkerworkss/talewar
+ ### Windows
+ 
+-`TalewardWorker-Setup.exe` von der [Release-Seite](https://github.com/Tinkerworkss/taleward-worker/releases/latest)
++`TalewardWorker-Setup.exe` von der [Release-Seite](https://github.com/Taleward/taleward-worker/releases/latest)
+ herunterladen und starten. Administratorrechte sind nicht nötig.
+ 
+@@ -30,5 +30,5 @@ Für Ubuntu, Debian, Fedora und ähnliche Systeme (x86_64). Ohne `sudo` ausführ
+ 
+ ```bash
+-curl -fsSL https://raw.githubusercontent.com/Tinkerworkss/taleward-worker/main/install-linux.sh | bash
++curl -fsSL https://raw.githubusercontent.com/Taleward/taleward-worker/main/install-linux.sh | bash
+ ```
+ 
+@@ -101,6 +101,6 @@ holen die neue Fassung innerhalb eines Tages, die Worker aktualisieren sich dar
+ ## Mitmachen
+ 
+-Fehler und Ideen gern als [Issue](https://github.com/Tinkerworkss/taleward-worker/issues). Die Regeln für Beiträge
+-gelten wie im Server-Repository: [CONTRIBUTING.md](https://github.com/Tinkerworkss/taleward-server/blob/main/CONTRIBUTING.md).
++Fehler und Ideen gern als [Issue](https://github.com/Taleward/taleward-worker/issues). Die Regeln für Beiträge
++gelten wie im Server-Repository: [CONTRIBUTING.md](https://github.com/Taleward/taleward-server/blob/main/CONTRIBUTING.md).
+ 
+ ## Lizenz
+diff --git a/install-linux.sh b/install-linux.sh
+index 0207bc7..02a0b82 100755
+--- a/install-linux.sh
++++ b/install-linux.sh
+@@ -2,5 +2,5 @@
+ # Taleward Worker unter Linux installieren (für den eigenen Benutzer, ohne root):
+ #
+-#   curl -fsSL https://raw.githubusercontent.com/Tinkerworkss/taleward-worker/main/install-linux.sh | bash
++#   curl -fsSL https://raw.githubusercontent.com/Taleward/taleward-worker/main/install-linux.sh | bash
+ #
+ # Installiert uv (falls nötig) und die App mit eigenem Fenster (Qt), legt einen Eintrag im Anwendungsmenü an und
+@@ -9,5 +9,5 @@
+ set -euo pipefail
+ 
+-REPO=Tinkerworkss/taleward-worker
++REPO=Taleward/taleward-worker
+ REF="${TALEWARD_WORKER_REF:-main}"
+ BIN="$HOME/.local/bin"
+diff --git a/packaging/pruefe-ki-paket.sh b/packaging/pruefe-ki-paket.sh
+index da00aa1..b46b468 100755
+--- a/packaging/pruefe-ki-paket.sh
++++ b/packaging/pruefe-ki-paket.sh
+@@ -5,5 +5,5 @@ set -euo pipefail
+ # Die Liste liegt im Server-Repository (TALEWARD_SERVER_REF: Branch oder Tag, Standard main)
+ ANF=/tmp/engine-requirements.txt
+-curl -fsSL "https://raw.githubusercontent.com/Tinkerworkss/taleward-server/${TALEWARD_SERVER_REF:-main}/engine-requirements.txt" -o "$ANF"
++curl -fsSL "https://raw.githubusercontent.com/Taleward/taleward-server/${TALEWARD_SERVER_REF:-main}/engine-requirements.txt" -o "$ANF"
+ grep -viE '^torchcodec==' "$ANF" > /tmp/basis.txt
+ grep -iE '^torchcodec==' "$ANF" > /tmp/extra.txt || true
+diff --git a/packaging/taleward-worker.spec b/packaging/taleward-worker.spec
+index d6663d0..bc4ed0c 100644
+--- a/packaging/taleward-worker.spec
++++ b/packaging/taleward-worker.spec
+@@ -37,5 +37,5 @@ if windows:
+             StringStruct("FileVersion", fassung),
+             StringStruct("InternalName", "TalewardWorker"),
+-            StringStruct("LegalCopyright", "AGPL-3.0 – https://github.com/Tinkerworkss/taleward-worker"),
++            StringStruct("LegalCopyright", "AGPL-3.0 – https://github.com/Taleward/taleward-worker"),
+             StringStruct("OriginalFilename", "TalewardWorker.exe"),
+             StringStruct("ProductName", "Taleward Worker"),
+diff --git a/packaging/windows/taleward-worker.iss b/packaging/windows/taleward-worker.iss
+index 75c6b38..fa426b9 100644
+--- a/packaging/windows/taleward-worker.iss
++++ b/packaging/windows/taleward-worker.iss
+@@ -13,5 +13,5 @@ AppVersion={#Version}
+ AppPublisher=Taleward
+ AppPublisherURL=https://taleward.org
+-AppSupportURL=https://github.com/Tinkerworkss/taleward-worker
++AppSupportURL=https://github.com/Taleward/taleward-worker
+ DefaultDirName={localappdata}\Programs\Taleward Worker
+ DefaultGroupName=Taleward
+diff --git a/pyproject.toml b/pyproject.toml
+index 2f59578..a30c9f5 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-worker"
+-version = "0.2.0"
++version = "0.2.1"
+ description = "Taleward Worker – verarbeitet Aufnahmen für einen Taleward-Server auf dem eigenen PC mit Grafikkarte"
+ license = "AGPL-3.0-only"
+diff --git a/taleward_worker/__init__.py b/taleward_worker/__init__.py
+index b717b04..ce3dcd2 100644
+--- a/taleward_worker/__init__.py
++++ b/taleward_worker/__init__.py
+@@ -4,5 +4,5 @@ Die App selbst ist klein. Das KI-Paket (Taleward-Server mit WhisperX, einige GB)
+ passender Fassung zum verbundenen Server und startet es als Unterprozess („chronik worker --app“).
+ """
+-VERSION = "0.2.0"
+-REPO = "Tinkerworkss/taleward-server"        # Server-Code = KI-Paket (engine-requirements.txt, Tags v…)
+-APP_REPO = "Tinkerworkss/taleward-worker"   # diese App
++VERSION = "0.2.1"
++REPO = "Taleward/taleward-server"        # Server-Code = KI-Paket (engine-requirements.txt, Tags v…)
++APP_REPO = "Taleward/taleward-worker"   # diese App
+diff --git a/taleward_worker/freigabe.py b/taleward_worker/freigabe.py
+index 7e97ac1..83fc285 100644
+--- a/taleward_worker/freigabe.py
++++ b/taleward_worker/freigabe.py
+@@ -7,5 +7,5 @@ durch den Rechteinhaber anlegt:
+ 
+       taleward-freigabe 1
+-      repo Tinkerworkss/taleward-server
++      repo Taleward/taleward-server
+       tag v0.4.38
+       commit <40 Hex-Zeichen>
+@@ -17,4 +17,7 @@ Der öffentliche Schlüssel steht fest hier im Code (gleichlautend im Taleward-S
+ deploy/aktualisieren.sh). Was der verbundene Server oder GitHub sonst über eine Datei sagen (Prüfsumme, Repo), zählt
+ nicht – der Server reicht die Freigabe nur durch.
++
++Repo-Namen: Seit dem Umzug in die Organisation „Taleward“ (13.10.2026) gelten für die drei eigenen Repos genau zwei
++Namen, der alte (``Tinkerworkss/…``) und der neue (``Taleward/…``). Abgeleitet wird nichts aus Adressen oder Antworten.
+ """
+ from __future__ import annotations
+@@ -38,4 +41,19 @@ _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$")
+ 
+ 
++EIGENE_REPOS = ("taleward-app", "taleward-server", "taleward-worker")
++BESITZER = ("taleward", "tinkerworkss")  # neu, alt
++
++
++def gleiches_repo(gefunden: str, erwartet: str) -> bool:
++    """Gehört eine Freigabe für `gefunden` zum erwarteten Repo? Exakt (ohne Groß-/Kleinschreibung), für die eigenen
++    Repos zusätzlich unter dem jeweils anderen der beiden festen Besitzernamen."""
++    g, e = gefunden.lower(), erwartet.lower()
++    if g == e:
++        return True
++    g_besitzer, _, g_name = g.partition("/")
++    e_besitzer, _, e_name = e.partition("/")
++    return g_name == e_name and g_name in EIGENE_REPOS and g_besitzer in BESITZER and e_besitzer in BESITZER
++
++
+ class FreigabeFehler(Exception):
+     pass
+@@ -150,5 +168,5 @@ def lesen(text: bytes, signatur: bytes | str, repo: str, tag: str) -> Freigabe:
+     if set(werte) != {"repo", "tag", "commit"} or not _COMMIT.match(werte["commit"]):
+         raise FreigabeFehler("Freigabe unvollständig")
+-    if werte["repo"].lower() != repo.lower() or werte["tag"] != tag:
++    if not gleiches_repo(werte["repo"], repo) or werte["tag"] != tag:
+         raise FreigabeFehler("Freigabe gehört zu einer anderen Fassung")
+     return Freigabe(werte["repo"], werte["tag"], werte["commit"], dateien)
+diff --git a/tests/test_freigabe.py b/tests/test_freigabe.py
+index f5b1bef..b21e808 100644
+--- a/tests/test_freigabe.py
++++ b/tests/test_freigabe.py
+@@ -52,6 +52,6 @@ def test_motor_nur_freigegebene_fassung(monkeypatch):
+     monkeypatch.setattr(fg, "von_github", von_github)
+     q = motor.quelle("0.4.38")
+-    assert gefragt == [("Tinkerworkss/taleward-server", "v0.4.38")]
+-    assert q["paket"] == "https://github.com/Tinkerworkss/taleward-server/archive/" + "c" * 40 + ".zip"
++    assert gefragt == [("Taleward/taleward-server", "v0.4.38")]
++    assert q["paket"] == "https://github.com/Taleward/taleward-server/archive/" + "c" * 40 + ".zip"
+     assert q["anforderungen"].endswith("/" + "c" * 40 + "/engine-requirements.txt")
+     for boese in ["main", "../../x/y/main", "0.4", "0.4.38/../x", ""]:
+@@ -144,5 +144,5 @@ def test_linux_repo_fest_und_commit_aus_freigabe(monkeypatch):
+                                      "freigabe": text.decode(), "freigabeSignatur": sig}, "https://mein.server", "t")
+     a._linux()
+-    assert befehle[0][-1] == f"taleward-worker[qt] @ https://github.com/{WORKER}/archive/{'f' * 40}.zip"
++    assert befehle[0][-1] == f"taleward-worker[qt] @ https://github.com/Taleward/taleward-worker/archive/{'f' * 40}.zip"
+ 
+ 
+@@ -158,2 +158,21 @@ def test_linux_ohne_freigabe_vom_server_fragt_github(monkeypatch):
+         selbstupdate.Aktualisierung({"version": "0.2.0", "tag": "worker-v0.2.0"}, "https://s", "t")._linux()
+     assert httpx  # Import genutzt
++
++
++# ---------------------------------------------------------------- Repo-Umzug (13.10.2026)
++def test_alter_und_neuer_repo_name():
++    from taleward_worker import freigabe as fg
++
++    for name in ("Tinkerworkss/taleward-server", "Taleward/taleward-server", "taleward/TALEWARD-server"):
++        text, sig = freigabe(name, "v0.4.84")
++        assert fg.lesen(text, sig, "Taleward/taleward-server", "v0.4.84").tag == "v0.4.84"
++        assert fg.lesen(text, sig, "Tinkerworkss/taleward-server", "v0.4.84").tag == "v0.4.84"
++    for name in ("Fremd/taleward-server", "Taleward/taleward-app", "Tinkerworkss/taleward-worker", "Taleward/server"):
++        text, sig = freigabe(name, "v0.4.84")
++        with pytest.raises(fg.FreigabeFehler):
++            fg.lesen(text, sig, "Taleward/taleward-server", "v0.4.84")
++    # Fremde Repos nur mit genau ihrem Namen
++    text, sig = freigabe("Fork/taleward-server", "v1.0.0")
++    assert fg.lesen(text, sig, "Fork/taleward-server", "v1.0.0")
++    with pytest.raises(fg.FreigabeFehler):
++        fg.lesen(text, sig, "Taleward/taleward-server", "v1.0.0")
+diff --git a/uv.lock b/uv.lock
+index c1029f3..f983046 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -677,5 +677,5 @@ wheels = [
+ [[package]]
+ name = "taleward-worker"
+-version = "0.2.0"
++version = "0.2.1"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
