@@ -36,7 +36,7 @@ if windows:
             StringStruct("FileDescription", "Taleward Worker"),
             StringStruct("FileVersion", fassung),
             StringStruct("InternalName", "TalewardWorker"),
-            StringStruct("LegalCopyright", "AGPL-3.0 – https://github.com/Tinkerworkss/taleward-worker"),
+            StringStruct("LegalCopyright", "AGPL-3.0 – https://github.com/Taleward/taleward-worker"),
             StringStruct("OriginalFilename", "TalewardWorker.exe"),
             StringStruct("ProductName", "Taleward Worker"),
             StringStruct("ProductVersion", fassung)])]),

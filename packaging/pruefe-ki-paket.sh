@@ -4,7 +4,7 @@
 set -euo pipefail
 # Die Liste liegt im Server-Repository (TALEWARD_SERVER_REF: Branch oder Tag, Standard main)
 ANF=/tmp/engine-requirements.txt
-curl -fsSL "https://raw.githubusercontent.com/Tinkerworkss/taleward-server/${TALEWARD_SERVER_REF:-main}/engine-requirements.txt" -o "$ANF"
+curl -fsSL "https://raw.githubusercontent.com/Taleward/taleward-server/${TALEWARD_SERVER_REF:-main}/engine-requirements.txt" -o "$ANF"
 grep -viE '^torchcodec==' "$ANF" > /tmp/basis.txt
 grep -iE '^torchcodec==' "$ANF" > /tmp/extra.txt || true
 for plattform in x86_64-pc-windows-msvc x86_64-manylinux_2_28; do

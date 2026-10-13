@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Taleward Worker unter Linux installieren (für den eigenen Benutzer, ohne root):
 #
-#   curl -fsSL https://raw.githubusercontent.com/Tinkerworkss/taleward-worker/main/install-linux.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Taleward/taleward-worker/main/install-linux.sh | bash
 #
 # Installiert uv (falls nötig) und die App mit eigenem Fenster (Qt), legt einen Eintrag im Anwendungsmenü an und
 # fragt, ob der Worker mit dem Computer starten soll. Nochmal ausführen = aktualisieren.
 # shellcheck disable=SC1111  # deutsche Anführungszeichen sind Absicht
 set -euo pipefail
 
-REPO=Tinkerworkss/taleward-worker
+REPO=Taleward/taleward-worker
 REF="${TALEWARD_WORKER_REF:-main}"
 BIN="$HOME/.local/bin"
 DATEN="${XDG_DATA_HOME:-$HOME/.local/share}"

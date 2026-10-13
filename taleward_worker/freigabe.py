@@ -6,7 +6,7 @@ durch den Rechteinhaber anlegt:
 - ``freigabe.txt``::
 
       taleward-freigabe 1
-      repo Tinkerworkss/taleward-server
+      repo Taleward/taleward-server
       tag v0.4.38
       commit <40 Hex-Zeichen>
       datei <sha256> <Dateiname>      (je Anhang des Release, kann fehlen)
@@ -16,6 +16,9 @@ durch den Rechteinhaber anlegt:
 Der öffentliche Schlüssel steht fest hier im Code (gleichlautend im Taleward-Server: app/freigabe.py,
 deploy/aktualisieren.sh). Was der verbundene Server oder GitHub sonst über eine Datei sagen (Prüfsumme, Repo), zählt
 nicht – der Server reicht die Freigabe nur durch.
+
+Repo-Namen: Seit dem Umzug in die Organisation „Taleward“ (13.10.2026) gelten für die drei eigenen Repos genau zwei
+Namen, der alte (``Tinkerworkss/…``) und der neue (``Taleward/…``). Abgeleitet wird nichts aus Adressen oder Antworten.
 """
 from __future__ import annotations
 
@@ -35,6 +38,21 @@ MAX_SIGNATUR = 4 * 1024
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$")
+
+
+EIGENE_REPOS = ("taleward-app", "taleward-server", "taleward-worker")
+BESITZER = ("taleward", "tinkerworkss")  # neu, alt
+
+
+def gleiches_repo(gefunden: str, erwartet: str) -> bool:
+    """Gehört eine Freigabe für `gefunden` zum erwarteten Repo? Exakt (ohne Groß-/Kleinschreibung), für die eigenen
+    Repos zusätzlich unter dem jeweils anderen der beiden festen Besitzernamen."""
+    g, e = gefunden.lower(), erwartet.lower()
+    if g == e:
+        return True
+    g_besitzer, _, g_name = g.partition("/")
+    e_besitzer, _, e_name = e.partition("/")
+    return g_name == e_name and g_name in EIGENE_REPOS and g_besitzer in BESITZER and e_besitzer in BESITZER
 
 
 class FreigabeFehler(Exception):
@@ -149,7 +167,7 @@ def lesen(text: bytes, signatur: bytes | str, repo: str, tag: str) -> Freigabe:
             raise FreigabeFehler("Freigabe beschädigt")
     if set(werte) != {"repo", "tag", "commit"} or not _COMMIT.match(werte["commit"]):
         raise FreigabeFehler("Freigabe unvollständig")
-    if werte["repo"].lower() != repo.lower() or werte["tag"] != tag:
+    if not gleiches_repo(werte["repo"], repo) or werte["tag"] != tag:
         raise FreigabeFehler("Freigabe gehört zu einer anderen Fassung")
     return Freigabe(werte["repo"], werte["tag"], werte["commit"], dateien)
 

@@ -51,8 +51,8 @@ def test_motor_nur_freigegebene_fassung(monkeypatch):
 
     monkeypatch.setattr(fg, "von_github", von_github)
     q = motor.quelle("0.4.38")
-    assert gefragt == [("Tinkerworkss/taleward-server", "v0.4.38")]
-    assert q["paket"] == "https://github.com/Tinkerworkss/taleward-server/archive/" + "c" * 40 + ".zip"
+    assert gefragt == [("Taleward/taleward-server", "v0.4.38")]
+    assert q["paket"] == "https://github.com/Taleward/taleward-server/archive/" + "c" * 40 + ".zip"
     assert q["anforderungen"].endswith("/" + "c" * 40 + "/engine-requirements.txt")
     for boese in ["main", "../../x/y/main", "0.4", "0.4.38/../x", ""]:
         with pytest.raises(motor.MotorFehler) as e:
@@ -143,7 +143,7 @@ def test_linux_repo_fest_und_commit_aus_freigabe(monkeypatch):
     a = selbstupdate.Aktualisierung({"version": "0.2.0", "repo": "Boese/fremd", "tag": "worker-v9.9.9",
                                      "freigabe": text.decode(), "freigabeSignatur": sig}, "https://mein.server", "t")
     a._linux()
-    assert befehle[0][-1] == f"taleward-worker[qt] @ https://github.com/{WORKER}/archive/{'f' * 40}.zip"
+    assert befehle[0][-1] == f"taleward-worker[qt] @ https://github.com/Taleward/taleward-worker/archive/{'f' * 40}.zip"
 
 
 def test_linux_ohne_freigabe_vom_server_fragt_github(monkeypatch):
@@ -157,3 +157,22 @@ def test_linux_ohne_freigabe_vom_server_fragt_github(monkeypatch):
     with pytest.raises(RuntimeError, match="Freigabe"):
         selbstupdate.Aktualisierung({"version": "0.2.0", "tag": "worker-v0.2.0"}, "https://s", "t")._linux()
     assert httpx  # Import genutzt
+
+
+# ---------------------------------------------------------------- Repo-Umzug (13.10.2026)
+def test_alter_und_neuer_repo_name():
+    from taleward_worker import freigabe as fg
+
+    for name in ("Tinkerworkss/taleward-server", "Taleward/taleward-server", "taleward/TALEWARD-server"):
+        text, sig = freigabe(name, "v0.4.84")
+        assert fg.lesen(text, sig, "Taleward/taleward-server", "v0.4.84").tag == "v0.4.84"
+        assert fg.lesen(text, sig, "Tinkerworkss/taleward-server", "v0.4.84").tag == "v0.4.84"
+    for name in ("Fremd/taleward-server", "Taleward/taleward-app", "Tinkerworkss/taleward-worker", "Taleward/server"):
+        text, sig = freigabe(name, "v0.4.84")
+        with pytest.raises(fg.FreigabeFehler):
+            fg.lesen(text, sig, "Taleward/taleward-server", "v0.4.84")
+    # Fremde Repos nur mit genau ihrem Namen
+    text, sig = freigabe("Fork/taleward-server", "v1.0.0")
+    assert fg.lesen(text, sig, "Fork/taleward-server", "v1.0.0")
+    with pytest.raises(fg.FreigabeFehler):
+        fg.lesen(text, sig, "Taleward/taleward-server", "v1.0.0")

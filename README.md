@@ -7,13 +7,13 @@ Sprecher und schreibt auf Wunsch auch die Recaps – auf einem PC mit Grafikkart
 kann irgendwo laufen, etwa auf einem gemieteten Server oder einem Raspberry Pi. Der PC meldet sich von selbst bei ihm;
 im Router muss nichts freigegeben werden.
 
-Der Server liegt unter [taleward-server](https://github.com/Tinkerworkss/taleward-server).
+Der Server liegt unter [taleward-server](https://github.com/Taleward/taleward-server).
 
 ## Installieren
 
 ### Windows
 
-`TalewardWorker-Setup.exe` von der [Release-Seite](https://github.com/Tinkerworkss/taleward-worker/releases/latest)
+`TalewardWorker-Setup.exe` von der [Release-Seite](https://github.com/Taleward/taleward-worker/releases/latest)
 herunterladen und starten. Administratorrechte sind nicht nötig.
 
 - Windows 10 (ab 1809) oder 11
@@ -29,7 +29,7 @@ Die App liegt unter `%LOCALAPPDATA%\Programs\Taleward Worker`; KI-Paket, Modelle
 Für Ubuntu, Debian, Fedora und ähnliche Systeme (x86_64). Ohne `sudo` ausführen:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Tinkerworkss/taleward-worker/main/install-linux.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Taleward/taleward-worker/main/install-linux.sh | bash
 ```
 
 Das Skript installiert [uv](https://docs.astral.sh/uv/) und die App mit eigenem Fenster (Qt), legt einen Eintrag im
@@ -100,8 +100,8 @@ holen die neue Fassung innerhalb eines Tages, die Worker aktualisieren sich dar�
 
 ## Mitmachen
 
-Fehler und Ideen gern als [Issue](https://github.com/Tinkerworkss/taleward-worker/issues). Die Regeln für Beiträge
-gelten wie im Server-Repository: [CONTRIBUTING.md](https://github.com/Tinkerworkss/taleward-server/blob/main/CONTRIBUTING.md).
+Fehler und Ideen gern als [Issue](https://github.com/Taleward/taleward-worker/issues). Die Regeln für Beiträge
+gelten wie im Server-Repository: [CONTRIBUTING.md](https://github.com/Taleward/taleward-server/blob/main/CONTRIBUTING.md).
 
 ## Lizenz
 
