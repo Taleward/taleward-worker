@@ -187,3 +187,10 @@ main { flex:1; overflow:auto; padding:22px 20px 28px; }
   padding:10px 16px; border-radius:var(--radius-md); box-shadow:var(--shadow-card); font-size:15px; max-width:90vw; }
 .notizen { white-space:pre-line; font-size:14px; margin:6px 0 0; }
 .meldung > span { display:block; }
+/* Erster Start: Wahl der Betriebsart */
+.wahl { display:flex; flex-direction:column; gap:4px; width:100%; min-height:48px; text-align:left; cursor:pointer;
+  font:inherit; color:inherit; border:1.5px solid var(--line); margin-bottom:12px; }
+.wahl strong { font-size:18px; line-height:26px; }
+.wahl span { color:var(--ink-muted); }
+.wahl:hover { border-color:var(--line-strong); }
+.wahl:focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }

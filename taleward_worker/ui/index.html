@@ -21,12 +21,40 @@
 <main>
 <!-- ============================================================ Assistent -->
 <section class="seite" id="assistent" hidden>
-  <ol class="schritte" aria-label="Einrichtung">
+  <ol class="schritte" aria-label="Einrichtung" id="schritte">
     <li data-schritt="1" data-t="Verbinden"></li>
     <li data-schritt="2" data-t="Prüfen"></li>
     <li data-schritt="3" data-t="Installieren"></li>
+    <li data-schritt="5" data-t="Konto"></li>
     <li data-schritt="4" data-t="Fertig"></li>
   </ol>
+
+  <div data-seite="0" hidden>
+    <h1 data-t="wahl_titel"></h1>
+    <p class="leise" data-t="wahl_text"></p>
+    <button class="karte wahl" id="wahl-einzelplatz" type="button">
+      <strong data-t="wahl_einzelplatz"></strong><span data-t="wahl_einzelplatz_text"></span></button>
+    <button class="karte wahl" id="wahl-verbunden" type="button">
+      <strong data-t="wahl_verbunden"></strong><span data-t="wahl_verbunden_text"></span></button>
+  </div>
+
+  <div data-seite="5" hidden>
+    <h1 data-t="konto_titel"></h1>
+    <p class="leise" data-t="konto_text"></p>
+    <div class="karte">
+      <label class="feld"><span data-t="Dein Name"></span>
+        <input id="konto-name" type="text" maxlength="128" autocomplete="name" spellcheck="false"></label>
+      <label class="feld"><span data-t="Passwort"></span>
+        <input id="konto-passwort" type="password" autocomplete="new-password">
+        <span class="hilfe" data-t="hilfe_passwort"></span></label>
+      <label class="feld"><span data-t="Passwort wiederholen"></span>
+        <input id="konto-passwort2" type="password" autocomplete="new-password"></label>
+      <div class="meldung meldung--hinweis" data-t="wlan_hinweis"></div>
+      <div class="meldung meldung--fehler" id="konto-fehler" hidden></div>
+      <p class="hilfe" id="konto-wartet" data-t="taleward_startet_noch" hidden></p>
+      <div class="knopfreihe knopfreihe--ende"><button class="tw-btn tw-btn--primary" id="konto-anlegen" data-t="Konto anlegen"></button></div>
+    </div>
+  </div>
 
   <div data-seite="1">
     <h1 data-t="Worker einrichten"></h1>
@@ -90,7 +118,7 @@
 
   <div data-seite="4" hidden>
     <h1 data-t="Fertig eingerichtet"></h1>
-    <p class="leise" data-t="fertig_text"></p>
+    <p class="leise" id="fertig-text" data-t="fertig_text"></p>
     <div class="karte">
       <div class="zeile"><div class="zeile__text"><strong data-t="autostart_titel"></strong><span data-t="autostart_text"></span></div>
         <label class="schalter"><input type="checkbox" data-einstellung="autostart"><span></span></label></div>
@@ -111,6 +139,16 @@
 
 <!-- ============================================================ Status -->
 <section class="seite" id="reiter-status" hidden>
+  <div class="karte" id="taleward-karte" hidden>
+    <div class="zeile"><div class="zeile__text"><strong id="taleward-titel"></strong><span id="taleward-text"></span></div></div>
+    <div class="meldung meldung--hinweis" id="netz-hinweis" hidden></div>
+    <div class="knopfreihe" id="taleward-knoepfe">
+      <button class="tw-btn tw-btn--primary" id="taleward-oeffnen" data-t="Taleward öffnen"></button>
+      <button class="tw-btn tw-btn--quiet" id="taleward-browser" data-t="Im Browser öffnen"></button>
+      <button class="tw-btn tw-btn--secondary" id="taleward-neustart" data-t="Neu starten" hidden></button>
+      <button class="tw-btn tw-btn--secondary" id="netz-freigeben" data-t="Erlauben" hidden></button>
+    </div>
+  </div>
   <div class="meldung meldung--hinweis" id="app-update" hidden></div>
   <div class="meldung" id="motor-update" hidden></div>
   <div class="karte" id="statuskarte" data-art="gestoppt">

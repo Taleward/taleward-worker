@@ -36,14 +36,26 @@
   }
 
   // ------------------------------------------------------------ Ansicht wählen
+  const einzelplatz = () => !!(S && S.einstellungen.art === "einzelplatz");
   function imAssistenten() {
     if (!S) return false;
+    if (!S.einstellungen.art) return true;
+    if (einzelplatz()) return (!S.motor && !S.entwicklung) || !S.einstellungen.konto_angelegt || fertigZeigen;
     if (!S.einstellungen.gekoppelt) return true;
     if (fertigZeigen) return true;
     if (!S.motor && !S.entwicklung) return true;
     return false;
   }
   function assistentSchritt() {
+    if (!S.einstellungen.art) return 0;
+    if (einzelplatz()) {
+      const inst = S.installation;
+      const offen = inst && inst.phase !== "fertig";
+      if (offen && (schritt === 3 || !S.motor)) return 3;
+      if (!S.motor && !S.entwicklung) return schritt === 3 ? 3 : 2;
+      if (!S.einstellungen.konto_angelegt) return 5;
+      return 4;
+    }
     if (!S.einstellungen.gekoppelt) return 1;
     const inst = S.installation;
     const offen = inst && inst.phase !== "fertig";
@@ -75,11 +87,19 @@
 
   function assistentZeigen() {
     const nr = assistentSchritt();
+    const folge = einzelplatz() ? [2, 3, 5, 4] : [1, 2, 3, 4];
+    $("#schritte").hidden = nr === 0;
     $$(".schritte li").forEach((li) => {
-      const n = Number(li.dataset.schritt);
-      li.dataset.stand = n < nr ? "fertig" : n === nr ? "aktiv" : "";
+      const n = Number(li.dataset.schritt), pos = folge.indexOf(n), aktuell = folge.indexOf(nr);
+      li.hidden = pos < 0;
+      li.dataset.stand = pos < aktuell ? "fertig" : pos === aktuell ? "aktiv" : "";
     });
     $$("[data-seite]").forEach((el) => { el.hidden = Number(el.dataset.seite) !== nr; });
+    if (nr === 5) kontoZeigen();
+    if (nr === 4) {
+      $("#fertig-text").textContent = einzelplatz() ? t("fertig_text_einzelplatz", { name: S.einstellungen.anmeldename || "–" }) : t("fertig_text");
+      $("#los").textContent = t(einzelplatz() ? "Taleward öffnen" : "Worker starten");
+    }
     if (nr === 1) {
       const name = $("#name");
       if (!name.value && S.einstellungen.name) name.value = S.einstellungen.name;
@@ -105,7 +125,8 @@
   }
 
   function pruefungZeigen() {
-    $("#verbunden-mit").textContent = t("verbunden_mit", { server: S.serverName || S.einstellungen.server, name: S.einstellungen.name });
+    $("#verbunden-mit").textContent = einzelplatz() ? t("pruefen_einzelplatz")
+      : t("verbunden_mit", { server: S.serverName || S.einstellungen.server, name: S.einstellungen.name });
     const h = S.hardware;
     if (!h) return;
     const k = h.grafikkarte, gpu = h.grafikkarteNutzbar;
@@ -131,7 +152,7 @@
     }
     $("#pruef-meldung").hidden = gpu;
     $("#pruef-meldung").className = "meldung meldung--hinweis";
-    $("#pruef-meldung").textContent = t("pr_cpu_angebot");
+    $("#pruef-meldung").textContent = t(einzelplatz() ? "pr_cpu_einzelplatz" : "pr_cpu_angebot");
     $("#testmodus-waehlen").hidden = gpu;
     $("#prozessor-waehlen").hidden = gpu;
     $("#weiter-installieren").hidden = !gpu;
@@ -178,6 +199,7 @@
     $("#installieren-text").textContent = test ? t("installieren_text_test")
       : prozessorWahl ? t("installieren_text_cpu", { mb: gb(1800) })
       : t("installieren_text_windows", { mb: gb(S.system === "windows" ? 7900 : 8500) });
+    if (einzelplatz() && S.system === "windows") $("#installieren-text").textContent += " " + t("inst_netz_hinweis");
     const laeuft = inst && !["fertig", "fehler", "abgebrochen"].includes(inst.phase);
     const fehler = inst && ["fehler", "abgebrochen"].includes(inst.phase);
     $("#inst-start").hidden = laeuft || fehler;
@@ -194,11 +216,44 @@
     if (fehler) $("#inst-fehlertext").textContent = t("f_" + inst.fehler);
   }
 
+  function kontoZeigen() {
+    const tw = S.taleward || {};
+    const bereit = !!tw.kontoMoeglich;
+    $("#konto-wartet").hidden = bereit || !!(tw.zustand && tw.zustand.art === "fehler");
+    $("#konto-anlegen").disabled = !bereit || beschaeftigt;
+    if (tw.zustand && tw.zustand.art === "fehler") {
+      const f = $("#konto-fehler"); f.textContent = t("tw_f_" + (tw.zustand.code || "startet_nicht")); f.hidden = false;
+    }
+  }
+
+  function talewardZeigen() {
+    const karte = $("#taleward-karte");
+    karte.hidden = !einzelplatz();
+    if (!einzelplatz()) return;
+    const tw = S.taleward || {}, z = tw.zustand || {}, art = z.art || "gestoppt";
+    $("#taleward-titel").textContent = t("tw_" + art);
+    $("#taleward-text").textContent = art === "fehler" ? t("tw_f_" + (z.code || "startet_nicht"))
+      : art === "laeuft" ? t("tw_laeuft_text", { name: S.einstellungen.anmeldename || "–" })
+      : art === "abgestuerzt" ? t("tw_abgestuerzt_text", { wann: wann(z.neuerVersuch) }) : t("tw_" + art + "_text");
+    $("#taleward-oeffnen").disabled = !tw.bereit;
+    $("#taleward-browser").disabled = !tw.bereit;
+    $("#taleward-neustart").hidden = art !== "fehler";
+    const netz = tw.netz || {};
+    const oeffentlich = (netz.profile || []).includes("Public") && !(netz.profile || []).includes("Private");
+    const ohneRegel = netz.noetig && netz.regel === false;
+    const hinweis = $("#netz-hinweis");
+    hinweis.hidden = !(oeffentlich || ohneRegel);
+    hinweis.textContent = oeffentlich ? t("netz_oeffentlich") : ohneRegel ? t("netz_ohne_regel") : "";
+    $("#netz-freigeben").hidden = !ohneRegel;
+  }
+
   function statusZeigen() {
+    talewardZeigen();
     const d = S.dienst, z = d.zustand, art = z.art;
     const karte = $("#statuskarte");
     karte.dataset.art = art;
-    let titel = t("st_" + art), text = t("st_" + art + "_text", { server: S.serverName || S.einstellungen.server, wann: wann(z.neuerVersuch) });
+    const serverText = einzelplatz() ? t("taleward_hier") : (S.serverName || S.einstellungen.server);
+    let titel = t("st_" + art), text = t("st_" + art + "_text", { server: serverText, wann: wann(z.neuerVersuch) });
     let fortschritt = null;
     if (art === "arbeitet") {
       text = t("st_" + (z.typ || "transcribe"));
@@ -221,7 +276,7 @@
     knoepfe(art);
     $("#z-heute").textContent = zahl(d.statistik.heute);
     $("#z-gesamt").textContent = zahl(d.statistik.gesamt);
-    $("#i-server").textContent = (S.serverName ? S.serverName + " · " : "") + S.einstellungen.server;
+    $("#i-server").textContent = einzelplatz() ? t("taleward_hier") : (S.serverName ? S.serverName + " · " : "") + S.einstellungen.server;
     $("#i-name").textContent = S.einstellungen.name;
     const k = S.hardware && S.hardware.grafikkarte;
     $("#i-gpu").textContent = d.info.gpu || (k ? `${k.name} · ${gb(k.vram_mb)}` : "–");
@@ -308,6 +363,7 @@
       if (el.type === "checkbox") el.checked = !!wert; else el.value = wert || (n === "modell" ? "auto" : "");
     });
     $("#fuss-version").textContent = "Taleward Worker " + S.version;
+    $("#neu-koppeln").hidden = einzelplatz();
     const k = S.hardware && S.hardware.grafikkarte;
     $("#zeile-prozessor").hidden = !(k && S.hardware.grafikkarteNutzbar) || S.einstellungen.testmodus;
     $("#zeile-recaps").hidden = !!S.einstellungen.testmodus;
@@ -396,6 +452,29 @@
         await neuLaden();
       } finally { beschaeftigt = false; $("#verbinden").disabled = false; }
     };
+    $("#wahl-einzelplatz").onclick = async () => { await api.betrieb_waehlen("einzelplatz"); await api.hardware_pruefen(); neuLaden(); };
+    $("#wahl-verbunden").onclick = async () => { await api.betrieb_waehlen("verbunden"); neuLaden(); };
+    $("#konto-anlegen").onclick = async () => {
+      if (beschaeftigt) return;
+      const fehler = $("#konto-fehler");
+      fehler.hidden = true;
+      beschaeftigt = true; $("#konto-anlegen").disabled = true;
+      try {
+        const r = await api.konto_anlegen($("#konto-name").value, $("#konto-passwort").value, $("#konto-passwort2").value);
+        if (!r.ok) { fehler.textContent = t("konto_f_" + r.fehler) !== "konto_f_" + r.fehler ? t("konto_f_" + r.fehler) : t("konto_f_unbekannt"); fehler.hidden = false; return; }
+        $("#konto-passwort").value = ""; $("#konto-passwort2").value = "";
+        fertigZeigen = true;
+        await neuLaden();
+      } finally { beschaeftigt = false; }
+    };
+    $("#taleward-oeffnen").onclick = () => api.taleward_oeffnen();
+    $("#taleward-browser").onclick = () => api.im_browser_oeffnen();
+    $("#taleward-neustart").onclick = () => { api.taleward_neu_starten(); setTimeout(neuLaden, 300); };
+    $("#netz-freigeben").onclick = async () => {
+      const r = await api.netz_freigeben();
+      if (!r.ok) toast(t("netz_abgelehnt"));
+      neuLaden();
+    };
     $("#nochmal-pruefen").onclick = async () => { await api.hardware_pruefen(); neuLaden(); };
     $("#weiter-installieren").onclick = () => { schritt = 3; testWahl = false; prozessorWahl = false; darstellen(); };
     $("#prozessor-waehlen").onclick = () => { schritt = 3; testWahl = false; prozessorWahl = true; darstellen(); };
@@ -422,7 +501,11 @@
     });
     $("#inst-nochmal").onclick = async () => { await api.installieren(testmodus()); neuLaden(); };
     $("#inst-abbrechen").onclick = () => api.installation_abbrechen();
-    $("#los").onclick = async () => { fertigZeigen = false; schritt = null; await api.starten(); reiter = "status"; neuLaden(); };
+    $("#los").onclick = async () => {
+      fertigZeigen = false; schritt = null;
+      if (einzelplatz()) await api.taleward_oeffnen(); else await api.starten();
+      reiter = "status"; neuLaden();
+    };
 
     $$("[data-einstellung]").forEach((el) => {
       el.addEventListener("change", async () => {
