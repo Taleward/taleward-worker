@@ -400,4 +400,10 @@ index 368750b..40b8be1 100644
 @@ -677,5 +677,5 @@ wheels = [
  [[package]]
  name = "taleward-worker"
- version = "taleward-worker"
+-version = "0.3.0"
++version = "0.3.1"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
