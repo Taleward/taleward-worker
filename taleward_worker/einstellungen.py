@@ -1,5 +1,5 @@
 """Einstellungen der App (JSON im Benutzerordner). Der Worker-Schlüssel steht nur hier und ist nur für den
-Benutzer lesbar."""
+Benutzer lesbar – unter Windows zusätzlich mit dem Windows-Datenschutz geschützt (geschuetzt.py)."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,7 @@ import socket
 import time
 from dataclasses import asdict, dataclass, field, fields
 
-from taleward_worker import pfade
+from taleward_worker import geschuetzt, pfade
 
 
 @dataclass
@@ -58,8 +58,10 @@ class Einstellungen:
         kann der Tausch kurz an Virenscanner oder Indexdienst scheitern – darum mit Wiederholung."""
         ziel = pfade.einstellungen()
         tmp = ziel.with_suffix(".tmp")
+        daten = asdict(self)
+        daten["token"] = geschuetzt.text_schuetzen(self.token)
         with tmp.open("w", encoding="utf-8") as f:
-            f.write(json.dumps(asdict(self), indent=2, ensure_ascii=False))
+            f.write(json.dumps(daten, indent=2, ensure_ascii=False))
             f.flush()
             os.fsync(f.fileno())
         try:
@@ -80,7 +82,9 @@ class Einstellungen:
                 continue
             if isinstance(daten, dict):
                 bekannt = {f.name for f in fields(cls)}
-                return cls(**{k: v for k, v in daten.items() if k in bekannt})
+                e = cls(**{k: v for k, v in daten.items() if k in bekannt})
+                e.token = geschuetzt.text_oeffnen(str(e.token or ""))
+                return e
         return cls()
 
     def fuer_oberflaeche(self) -> dict:

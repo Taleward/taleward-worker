@@ -19,9 +19,9 @@ from collections import deque
 
 import httpx
 
-from taleward_worker import VERSION, motor, pfade, prozesse
+from taleward_worker import VERSION, geschuetzt, motor, pfade, prozesse
 
-MINDEST_SERVER = "0.4.96"   # ab dieser Server-Fassung: Worker-Schlüsseldatei und geordnetes Beenden
+MINDEST_SERVER = "0.4.100"  # ab dieser Server-Fassung: Schlüssel geschützt, Sicherung mit Passwort
 PORT = 8000
 ADRESSE = f"http://127.0.0.1:{PORT}"
 APP_ADRESSE = f"http://localhost:{PORT}/app/"
@@ -106,6 +106,7 @@ class ServerDienst:
             "DATA_DIR": str(pfade.einzelplatz_daten()),
             "EINZELPLATZ_WORKER_DATEI": str(pfade.worker_schluessel()),
             "EINZELPLATZ_STOPP_DATEI": str(pfade.server_stopp()),
+            "EINZELPLATZ_WORKER_GESCHUETZT": "true",  # Schlüssel mit dem Windows-Datenschutz (Server ab 0.4.100)
             "LOCAL_WORKER_AUTOSTART": "false",
             "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1",
             "PATH": str(pfade.werkzeuge()) + os.pathsep + env.get("PATH", ""),  # ffmpeg für die Längenmessung
@@ -237,7 +238,7 @@ class ServerDienst:
     # ------------------------------------------------------------------ Konto und Worker
     def worker_token(self) -> str | None:
         try:
-            wert = pfade.worker_schluessel().read_text(encoding="utf-8").strip()
+            wert = geschuetzt.text_oeffnen(pfade.worker_schluessel().read_text(encoding="utf-8").strip())
         except OSError:
             return None
         return wert if wert.startswith("wk.") else None
