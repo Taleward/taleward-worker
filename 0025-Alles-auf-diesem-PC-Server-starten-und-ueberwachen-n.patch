@@ -1,0 +1,689 @@
+From 9a4de4a249e82be9ed23d70c62c37283cddc67e7 Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 18:01:23 +0200
+Subject: [PATCH 25/29] Alles auf diesem PC: Server starten und ueberwachen,
+ neueste freigegebene Fassung
+
+---
+ taleward_worker/einstellungen.py |  16 ++
+ taleward_worker/einzelplatz.py   | 263 +++++++++++++++++++++++++++++++
+ taleward_worker/motor.py         |  56 +++++++
+ taleward_worker/pfade.py         |  35 ++++
+ tests/test_einzelplatz.py        | 228 +++++++++++++++++++++++++++
+ tests/test_robustheit.py         |   2 +-
+ 6 files changed, 599 insertions(+), 1 deletion(-)
+ create mode 100644 taleward_worker/einzelplatz.py
+ create mode 100644 tests/test_einzelplatz.py
+
+diff --git a/taleward_worker/einstellungen.py b/taleward_worker/einstellungen.py
+index 8dcbc6b..feaaf9b 100644
+--- a/taleward_worker/einstellungen.py
++++ b/taleward_worker/einstellungen.py
+@@ -31,4 +31,8 @@ class Einstellungen:
+     motor_art: str = ""             # "ki" oder "test"
+     sprache: str = ""               # leer = Systemsprache
++    betrieb: str = ""               # "" = noch nicht gewählt | verbunden | einzelplatz („Alles auf diesem PC“)
++    konto_angelegt: bool = False    # Einzelplatz: Konto der SL angelegt
++    anmeldename: str = ""           # Einzelplatz: zum Anzeigen („Dein Anmeldename“)
++    firewall_gefragt: bool = False  # Einzelplatz: Netzwerk-Freigabe einmal von selbst angeboten
+     hinweis_hintergrund_gezeigt: bool = False
+ 
+@@ -37,4 +41,15 @@ class Einstellungen:
+         return bool(self.server and self.token)
+ 
++    @property
++    def einzelplatz(self) -> bool:
++        return self.betrieb == "einzelplatz"
++
++    @property
++    def art(self) -> str:
++        """Betriebsart mit Rückfall für ältere Einstellungen (vor 0.3.0 gab es nur „verbunden“)."""
++        if self.betrieb in ("verbunden", "einzelplatz"):
++            return self.betrieb
++        return "verbunden" if self.server and self.token else ""
++
+     def speichern(self) -> None:
+         """Sicher schreiben: erst in eine Nebendatei, auf die Platte zwingen (fsync – sonst kann nach einem
+@@ -72,4 +87,5 @@ class Einstellungen:
+         d.pop("token")
+         d["gekoppelt"] = self.gekoppelt
++        d["art"] = self.art
+         return d
+ 
+diff --git a/taleward_worker/einzelplatz.py b/taleward_worker/einzelplatz.py
+new file mode 100644
+index 0000000..15cf7c2
+--- /dev/null
++++ b/taleward_worker/einzelplatz.py
+@@ -0,0 +1,263 @@
++"""„Alles auf diesem PC“: Das Programm startet den Taleward-Server aus dem KI-Paket und überwacht ihn.
++
++- Gestartet wird `python -m app.cli einzelplatz` (Betriebsart Einzelplatz des Servers, ab Server 0.4.96): im Heimnetz
++  erreichbar, Verwaltung und Worker-Anschluss nur auf diesem PC.
++- Das erste Konto legt das Programm über einen einmaligen Startschlüssel an (Datei, nur für den Windows-Nutzer;
++  der Server liest und löscht sie beim Start). Nie in der Befehlszeile, nie im Protokoll.
++- Den Schlüssel für den Worker schreibt der Server bei jedem Start in eine Datei; das Programm koppelt seinen Worker
++  damit – ohne Kopplungscode.
++- Beenden: Stoppdatei (der Server fährt geordnet herunter), notfalls hart.
++"""
++from __future__ import annotations
++
++import os
++import secrets
++import subprocess
++import threading
++import time
++from collections import deque
++
++import httpx
++
++from taleward_worker import VERSION, motor, pfade, prozesse
++
++MINDEST_SERVER = "0.4.96"   # ab dieser Server-Fassung: Worker-Schlüsseldatei und geordnetes Beenden
++PORT = 8000
++ADRESSE = f"http://127.0.0.1:{PORT}"
++APP_ADRESSE = f"http://localhost:{PORT}/app/"
++WARTEZEITEN = [3, 10, 30, 120]
++START_FRIST_S = 180          # so lange darf der erste Start dauern (Datenbank einrichten, Web-App laden)
++STOPP_FRIST_S = 20
++MIN_PASSWORT = 8
++
++
++class ServerDienst:
++    """Startet den Server, startet ihn nach einem Absturz neu und meldet seinen Zustand."""
++
++    def __init__(self, befehl: list[str] | None = None):
++        self._befehl = befehl  # für Tests
++        self._prozess: subprocess.Popen | None = None
++        self._sperre = threading.RLock()
++        self._soll_laufen = False
++        self._versuche = 0
++        self._neustart_um: float | None = None
++        self._schluessel: str | None = None
++        self._mit_schluessel = False
++        self.bei_bereit = None  # Aufruf nach jedem erfolgreichen Start (Worker mit frischem Schlüssel koppeln)
++        self.zustand: dict = {"art": "gestoppt"}
++        self.zeilen: deque[str] = deque(maxlen=400)
++        self.bereit = threading.Event()
++        threading.Thread(target=self._wachen, daemon=True, name="server-waechter").start()
++
++    # ------------------------------------------------------------------ Steuerung
++    def starten(self, startschluessel: bool = False) -> None:
++        """`startschluessel`: noch kein Konto – dem Server einen frischen einmaligen Schlüssel mitgeben."""
++        with self._sperre:
++            self._soll_laufen = True
++            self._versuche = 0
++            self._neustart_um = None
++            self._mit_schluessel = startschluessel
++            if not self.laeuft():
++                self._prozess_starten()
++
++    def stoppen(self, warten: float = STOPP_FRIST_S) -> None:
++        with self._sperre:
++            self._soll_laufen = False
++            self._neustart_um = None
++            p = self._prozess
++        self.bereit.clear()
++        if p and p.poll() is None:
++            try:
++                pfade.server_stopp().write_text("stopp", encoding="utf-8")
++            except OSError:
++                pass
++            try:
++                p.wait(warten)
++            except subprocess.TimeoutExpired:
++                pass
++            prozesse.beenden(p, warten=5, sanft=True)
++        pfade.server_stopp().unlink(missing_ok=True)
++        self._setzen("gestoppt")
++
++    def laeuft(self) -> bool:
++        return self._prozess is not None and self._prozess.poll() is None
++
++    def warten_bis_bereit(self, frist: float = START_FRIST_S) -> bool:
++        return self.bereit.wait(frist)
++
++    # ------------------------------------------------------------------ Prozess
++    def befehl(self) -> list[str]:
++        if self._befehl:
++            return list(self._befehl)
++        py = os.environ.get("TALEWARD_MOTOR") or str(pfade.motor_python())
++        return [py, "-m", "app.cli", "einzelplatz", "--port", str(PORT)]
++
++    def umgebung(self) -> dict:
++        env = motor.saubere_umgebung()
++        env.update({
++            "TALEWARD_EINZELPLATZ": "1", "EINZELPLATZ_PORT": str(PORT),
++            "DATA_DIR": str(pfade.einzelplatz_daten()),
++            "EINZELPLATZ_WORKER_DATEI": str(pfade.worker_schluessel()),
++            "EINZELPLATZ_STOPP_DATEI": str(pfade.server_stopp()),
++            "LOCAL_WORKER_AUTOSTART": "false",
++            "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1",
++            "PATH": str(pfade.werkzeuge()) + os.pathsep + env.get("PATH", ""),  # ffmpeg für die Längenmessung
++        })
++        # Nichts von außen hereinlassen, was die Betriebsart umstellt
++        for name in ("DATABASE_URL", "PUBLIC_URL", "FORWARDED_ALLOW_IPS", "CORS_ORIGINS", "TALEWARD_STARTSCHLUESSEL",
++                     "TALEWARD_STARTSCHLUESSEL_DATEI", "VERWALTUNG_NUR_AUS", "EINRICHTUNG_IM_HEIMNETZ"):
++            env.pop(name, None)
++        if self._schluessel:
++            env["TALEWARD_STARTSCHLUESSEL_DATEI"] = str(pfade.startschluessel())
++        return env
++
++    def _schluessel_vorbereiten(self) -> None:
++        pfade.startschluessel().unlink(missing_ok=True)
++        self._schluessel = None
++        if not self._mit_schluessel:
++            return
++        self._schluessel = secrets.token_urlsafe(32)
++        datei = pfade.startschluessel()
++        fd = os.open(datei, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # %LOCALAPPDATA% gehört nur dem Nutzer
++        with os.fdopen(fd, "w", encoding="utf-8") as f:
++            f.write(self._schluessel)
++
++    def _prozess_starten(self) -> None:
++        if not self._befehl and not os.environ.get("TALEWARD_MOTOR") and not pfade.motor_python().exists():
++            self._setzen("fehler", code="motor_fehlt")
++            self._soll_laufen = False
++            return
++        self.bereit.clear()
++        pfade.server_stopp().unlink(missing_ok=True)
++        pfade.worker_schluessel().unlink(missing_ok=True)  # der Server schreibt einen frischen
++        self._schluessel_vorbereiten()
++        self._setzen("startet")
++        self._schreiben("Taleward startet …")
++        try:
++            self._prozess = subprocess.Popen(self.befehl(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
++                                             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
++                                             bufsize=1, env=self.umgebung(), cwd=pfade.basis(),
++                                             **prozesse.start_argumente())
++        except OSError as e:
++            self._setzen("fehler", code="start_fehlgeschlagen", text=str(e))
++            self._soll_laufen = False
++            return
++        prozesse.zuordnen(self._prozess)
++        p = self._prozess
++        threading.Thread(target=self._lesen, args=(p,), daemon=True, name="server-ausgabe").start()
++        threading.Thread(target=self._bereit_pruefen, args=(p,), daemon=True, name="server-bereit").start()
++
++    def _bereit_pruefen(self, p: subprocess.Popen) -> None:
++        ende = time.monotonic() + START_FRIST_S
++        with httpx.Client(timeout=3, headers={"User-Agent": f"TalewardWorker/{VERSION}"}) as k:
++            while time.monotonic() < ende and p.poll() is None:
++                try:
++                    if k.get(f"{ADRESSE}/api/v1/health").status_code == 200 and pfade.worker_schluessel().exists():
++                        self._versuche = 0
++                        self._setzen("laeuft")
++                        self.bereit.set()
++                        self._schreiben("Taleward läuft")
++                        if callable(self.bei_bereit):
++                            threading.Thread(target=self.bei_bereit, daemon=True, name="worker-koppeln").start()
++                        return
++                except httpx.HTTPError:
++                    pass
++                time.sleep(0.5)
++        if p.poll() is None and p is self._prozess:
++            self._setzen("fehler", code="startet_nicht")
++
++    def _lesen(self, p: subprocess.Popen) -> None:
++        belegt = False
++        for zeile in p.stdout:
++            zeile = zeile.rstrip()
++            if not zeile:
++                continue
++            self._schreiben(zeile)
++            if "10048" in zeile or "address already in use" in zeile.lower():
++                belegt = True
++        code = p.wait()
++        self.bereit.clear()
++        if self._schluessel:
++            pfade.startschluessel().unlink(missing_ok=True)
++        with self._sperre:
++            if p is not self._prozess:
++                return
++            if not self._soll_laufen:
++                self._setzen("gestoppt")
++            elif belegt:
++                self._setzen("fehler", code="anschluss_belegt")
++                self._soll_laufen = False
++            else:
++                warte = WARTEZEITEN[min(self._versuche, len(WARTEZEITEN) - 1)]
++                self._versuche += 1
++                self._schreiben(f"Taleward unerwartet beendet (Code {code}) – Neustart in {warte} s")
++                self._setzen("abgestuerzt", code=str(code), neuerVersuch=time.time() + warte)
++                self._neustart_um = time.monotonic() + warte
++
++    def _wachen(self) -> None:
++        while True:
++            time.sleep(1)
++            try:
++                with self._sperre:
++                    if self._soll_laufen and self._neustart_um and time.monotonic() >= self._neustart_um:
++                        self._neustart_um = None
++                        self._prozess_starten()
++            except Exception as e:  # noqa: BLE001 – der Wächter darf nie sterben
++                self._schreiben(f"Fehler im Wächter: {type(e).__name__}: {e}")
++
++    # ------------------------------------------------------------------ Konto und Worker
++    def worker_token(self) -> str | None:
++        try:
++            wert = pfade.worker_schluessel().read_text(encoding="utf-8").strip()
++        except OSError:
++            return None
++        return wert if wert.startswith("wk.") else None
++
++    def konto_anlegen(self, name: str, passwort: str, betriebsart: str | None = None) -> dict:
++        """Erstes Konto über den Startschlüssel. Antwort {ok, anmeldename} bzw. {ok: False, fehler}."""
++        if not self._schluessel:
++            return {"ok": False, "fehler": "kein_schluessel"}
++        body = {"schluessel": self._schluessel, "name": name, "passwort": passwort}
++        if betriebsart:
++            body["betriebsart"] = betriebsart
++        try:
++            with httpx.Client(timeout=30, headers={"User-Agent": f"TalewardWorker/{VERSION}"}) as k:
++                r = k.post(f"{ADRESSE}/verwaltung/einzelplatz/konto", json=body)
++        except httpx.HTTPError:
++            return {"ok": False, "fehler": "nicht_erreichbar"}
++        try:
++            daten = r.json()
++        except ValueError:
++            daten = {}
++        if r.status_code == 201:
++            self._schluessel = None
++            self._mit_schluessel = False
++            return {"ok": True, "anmeldename": daten.get("anmeldename", "")}
++        if r.status_code == 409:
++            self._schluessel = None
++            self._mit_schluessel = False
++            return {"ok": False, "fehler": "schon_eingerichtet"}
++        if r.status_code == 404:
++            return {"ok": False, "fehler": "schluessel_abgelaufen"}
++        code = daten.get("code") if isinstance(daten, dict) else None
++        return {"ok": False, "fehler": code if isinstance(code, str) else "unbekannt"}
++
++    # ------------------------------------------------------------------ Zustand
++    def _setzen(self, art: str, **daten) -> None:
++        self.zustand = {"art": art, "seit": time.time(), **daten}
++
++    def _schreiben(self, text: str) -> None:
++        zeile = f"{time.strftime('%d.%m. %H:%M:%S')}  {text}"
++        self.zeilen.append(zeile)
++        try:
++            datei = pfade.protokolle() / "server.log"
++            if datei.exists() and datei.stat().st_size > 2_000_000:
++                os.replace(datei, datei.with_suffix(".log.1"))
++            with datei.open("a", encoding="utf-8") as f:
++                f.write(zeile + "\n")
++        except OSError:
++            pass
++
++    def fuer_oberflaeche(self) -> dict:
++        return {"zustand": self.zustand, "laeuft": self.laeuft(), "bereit": self.bereit.is_set(),
++                "kontoMoeglich": bool(self._schluessel) and self.bereit.is_set()}
+diff --git a/taleward_worker/motor.py b/taleward_worker/motor.py
+index f1c4282..8ad6a36 100644
+--- a/taleward_worker/motor.py
++++ b/taleward_worker/motor.py
+@@ -90,4 +90,50 @@ def quelle(fassung: str) -> dict:
+ 
+ 
++def neueste_fassung(klient: httpx.Client | None = None, mindestens: str | None = None) -> str:
++    """„Alles auf diesem PC“: Es gibt keinen Server, der die Fassung nennt – also die neueste freigegebene
++    Server-Fassung bei GitHub. Zählt nur, wofür eine gültige Freigabe vorliegt (ohne Freigabe weiter suchen, nie ein
++    Rückfall unter `mindestens`, die laufende Fassung)."""
++    from taleward_worker.selbstupdate import neuer
++
++    eigen = os.environ.get("TALEWARD_MOTOR_FASSUNG")  # Entwicklung
++    if eigen:
++        return eigen
++    eigener_klient = klient is None
++    klient = klient or httpx.Client(timeout=20, follow_redirects=True,
++                                    headers={"User-Agent": f"TalewardWorker/{VERSION}",
++                                             "Accept": "application/vnd.github+json"})
++    try:
++        r = klient.get(f"https://api.github.com/repos/{REPO}/releases", params={"per_page": 30})
++        r.raise_for_status()
++        eintraege = r.json()
++    except httpx.HTTPError as e:
++        raise MotorFehler(_netzcode(e)) from None
++    except ValueError:
++        raise MotorFehler("github_nicht_erreichbar") from None
++    finally:
++        if eigener_klient:
++            klient.close()
++    fassungen = []
++    for e in eintraege if isinstance(eintraege, list) else []:
++        tag = str(e.get("tag_name") or "") if isinstance(e, dict) else ""
++        m = re.fullmatch(r"v(\d{1,4}\.\d{1,4}\.\d{1,4})", tag)
++        if m and not e.get("draft") and not e.get("prerelease"):
++            fassungen.append(m.group(1))
++    fassungen.sort(key=lambda v: tuple(int(x) for x in v.split(".")), reverse=True)
++    for fassung in fassungen[:6]:
++        if mindestens and neuer(mindestens, fassung):
++            break  # nie zurück unter die laufende Fassung
++        try:
++            freigabe.von_github(REPO, f"v{fassung}", user_agent=f"TalewardWorker/{VERSION}")
++        except freigabe.FreigabeFehler:
++            continue  # noch nicht freigegeben – die nächstältere prüfen
++        except httpx.HTTPError as e:
++            raise MotorFehler(_netzcode(e)) from None
++        return fassung
++    if mindestens:
++        return mindestens
++    raise MotorFehler("nicht_freigegeben", "Keine freigegebene Fassung gefunden.")
++
++
+ def _adressen(tag: str, commit: str) -> dict:
+     return {"ref": tag, "genau": True, "commit": commit,
+@@ -102,4 +148,5 @@ class Installation:
+     testmodus: bool = False
+     backend: str = "cuda"         # "cuda" (NVIDIA) oder "cpu" (nur Prozessor, deutlich kleiner)
++    neueste: bool = False         # Alles auf diesem PC: Fassung = neueste freigegebene bei GitHub
+     phase: str = "start"          # start, python, pakete, taleward, ffmpeg, fertig, fehler, abgebrochen
+     anteil: float = 0.0
+@@ -190,4 +237,13 @@ class Installation:
+ 
+     def _installieren(self) -> None:
++        if not self.fassung and self.neueste:
++            from taleward_worker.einzelplatz import MINDEST_SERVER
++            from taleward_worker.selbstupdate import neuer
++
++            self.phase = "suchen"
++            fassung = neueste_fassung()
++            if neuer(MINDEST_SERVER, fassung):
++                raise MotorFehler("einzelplatz_zu_alt", f"Neueste freigegebene Fassung: {fassung}")
++            self.fassung = fassung
+         q = quelle(self.fassung)
+         self.zeilen.append(f"Fassung {self.fassung} → {q['ref']}" + (f" ({q['commit'][:12]}, freigegeben)"
+diff --git a/taleward_worker/pfade.py b/taleward_worker/pfade.py
+index 7c45a12..9e119f2 100644
+--- a/taleward_worker/pfade.py
++++ b/taleward_worker/pfade.py
+@@ -63,4 +63,39 @@ def einstellungen() -> Path:
+ 
+ 
++def einzelplatz_daten() -> Path:
++    """„Alles auf diesem PC“: Daten von Taleward (Kampagnen, Aufnahmen, Konten) – getrennt vom Programm, damit sie
++    ein Neuinstallieren überstehen. Windows: %LOCALAPPDATA%\\Taleward\\Daten (wie der Server es selbst vorsieht)."""
++    if os.environ.get("TALEWARD_WORKER_HOME"):
++        p = basis() / "daten"
++    elif WINDOWS:
++        p = Path(user_data_dir("Taleward", appauthor=False, roaming=False)) / "Daten"
++    else:
++        p = Path(user_data_dir("taleward", appauthor=False))
++    p.mkdir(parents=True, exist_ok=True)
++    return p
++
++
++def startschluessel() -> Path:
++    """Einmaliger Schlüssel für das erste Konto – der Server liest und löscht die Datei beim Start."""
++    return basis() / "start.key"
++
++
++def worker_schluessel() -> Path:
++    """Schlüssel des Workers – der Server schreibt ihn bei jedem Start neu."""
++    return basis() / "worker.key"
++
++
++def server_stopp() -> Path:
++    """Liegt diese Datei, beendet sich der Server geordnet."""
++    return basis() / "server.stopp"
++
++
++def fenster_speicher() -> Path:
++    """Speicher des Programmfensters (Anmeldung der App, Aufnahmen bis zum Hochladen)."""
++    p = basis() / "fenster"
++    p.mkdir(parents=True, exist_ok=True)
++    return p
++
++
+ def ressourcen() -> Path:
+     """Mitgelieferte Dateien (Oberfläche, Symbole, uv). Im PyInstaller-Paket unter sys._MEIPASS."""
+diff --git a/tests/test_einzelplatz.py b/tests/test_einzelplatz.py
+new file mode 100644
+index 0000000..bd94f46
+--- /dev/null
++++ b/tests/test_einzelplatz.py
+@@ -0,0 +1,228 @@
++"""„Alles auf diesem PC“: Server starten und überwachen, Konto über den Startschlüssel, Programmfenster-Regeln."""
++import json
++import socket
++import sys
++import time
++
++import httpx
++import pytest
++
++# Ein kleiner Ersatz-Server, der sich verhält wie `chronik einzelplatz` (Server ab 0.4.96)
++ERSATZ = r'''
++import json, os, sys, threading, time
++from http.server import BaseHTTPRequestHandler, HTTPServer
++from pathlib import Path
++
++modus = os.environ.get("ERSATZ_MODUS", "")
++zaehler = Path(os.environ["ERSATZ_ZAEHLER"])
++n = int(zaehler.read_text()) if zaehler.exists() else 0
++zaehler.write_text(str(n + 1))
++if modus == "belegt":
++    print("ERROR: [Errno 98] error while attempting to bind: address already in use", flush=True)
++    sys.exit(1)
++if modus == "absturz" and n == 0:
++    sys.exit(3)
++schluessel = None
++datei = os.environ.get("TALEWARD_STARTSCHLUESSEL_DATEI")
++if datei:
++    schluessel = Path(datei).read_text(encoding="utf-8").strip()
++    Path(datei).unlink()
++Path(os.environ["EINZELPLATZ_WORKER_DATEI"]).write_text(f"wk.ersatz.{n}\n", encoding="utf-8")
++port = int(os.environ["ERSATZ_PORT"])
++stopp = Path(os.environ["EINZELPLATZ_STOPP_DATEI"])
++
++class H(BaseHTTPRequestHandler):
++    def log_message(self, *a):
++        pass
++    def _json(self, code, daten):
++        roh = json.dumps(daten).encode()
++        self.send_response(code); self.send_header("Content-Type", "application/json")
++        self.send_header("Content-Length", str(len(roh))); self.end_headers(); self.wfile.write(roh)
++    def do_GET(self):
++        self._json(200 if self.path == "/api/v1/health" else 404, {"status": "ok"})
++    def do_POST(self):
++        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
++        if self.path != "/verwaltung/einzelplatz/konto" or not schluessel or body.get("schluessel") != schluessel:
++            return self._json(404, {"code": "not_found"})
++        if len(body.get("passwort", "")) < 8:
++            return self._json(400, {"code": "password_too_short"})
++        self._json(201, {"anmeldename": "anna"})
++
++s = HTTPServer(("127.0.0.1", port), H)
++def wache():
++    while not stopp.exists():
++        time.sleep(0.05)
++    stopp.unlink()
++    print("Shutting down", flush=True)
++    threading.Thread(target=s.shutdown).start()
++threading.Thread(target=wache, daemon=True).start()
++print("Uvicorn running", flush=True)
++s.serve_forever()
++'''
++
++
++def _freier_port() -> int:
++    with socket.socket() as s:
++        s.bind(("127.0.0.1", 0))
++        return s.getsockname()[1]
++
++
++@pytest.fixture()
++def ersatz(tmp_path, monkeypatch):
++    from taleward_worker import einzelplatz
++
++    skript = tmp_path / "ersatz.py"
++    skript.write_text(ERSATZ, encoding="utf-8")
++    port = _freier_port()
++    monkeypatch.setenv("ERSATZ_PORT", str(port))
++    monkeypatch.setenv("ERSATZ_ZAEHLER", str(tmp_path / "zaehler"))
++    monkeypatch.setattr(einzelplatz, "ADRESSE", f"http://127.0.0.1:{port}")
++    monkeypatch.setattr(einzelplatz, "WARTEZEITEN", [0.2, 0.2])
++    dienste = []
++
++    def neu():
++        d = einzelplatz.ServerDienst(befehl=[sys.executable, str(skript)])
++        dienste.append(d)
++        return d
++    yield neu
++    for d in dienste:
++        d.stoppen(warten=3)
++
++
++def test_start_konto_und_geordnetes_ende(ersatz, monkeypatch):
++    from taleward_worker import pfade
++
++    d = ersatz()
++    gekoppelt = []
++    d.bei_bereit = lambda: gekoppelt.append(d.worker_token())
++    d.starten(startschluessel=True)
++    assert d.warten_bis_bereit(15)
++    assert d.zustand["art"] == "laeuft"
++    assert not pfade.startschluessel().exists()  # der Server hat sie gelesen und gelöscht
++    for _ in range(50):
++        if gekoppelt:
++            break
++        time.sleep(0.05)
++    assert gekoppelt == ["wk.ersatz.0"]
++    # Der Schlüssel steht in keiner Zeile des Protokolls und nicht in der Umgebung des Servers
++    schluessel = d._schluessel
++    assert schluessel and len(schluessel) >= 43
++    assert all(schluessel not in z for z in d.zeilen)
++    assert schluessel not in json.dumps(d.umgebung())
++    assert d.fuer_oberflaeche()["kontoMoeglich"]
++    assert d.konto_anlegen("Anna", "kurz") == {"ok": False, "fehler": "password_too_short"}
++    assert d.konto_anlegen("Anna", "Lindwurm-Kessel-7") == {"ok": True, "anmeldename": "anna"}
++    assert d.konto_anlegen("Anna", "Lindwurm-Kessel-7")["fehler"] == "kein_schluessel"
++    t0 = time.monotonic()
++    d.stoppen()
++    assert time.monotonic() - t0 < 5 and not d.laeuft() and d.zustand["art"] == "gestoppt"
++    assert any("Shutting down" in z for z in d.zeilen)  # über die Stoppdatei, nicht hart beendet
++
++
++def test_ohne_konto_kein_schluessel_mehr(ersatz):
++    from taleward_worker import pfade
++
++    d = ersatz()
++    d.starten(startschluessel=False)
++    assert d.warten_bis_bereit(15)
++    assert "TALEWARD_STARTSCHLUESSEL_DATEI" not in d.umgebung()
++    assert not pfade.startschluessel().exists()
++    assert d.konto_anlegen("Anna", "Lindwurm-Kessel-7")["fehler"] == "kein_schluessel"
++
++
++def test_neustart_nach_absturz_mit_frischem_worker_schluessel(ersatz, monkeypatch):
++    monkeypatch.setenv("ERSATZ_MODUS", "absturz")
++    d = ersatz()
++    gekoppelt = []
++    d.bei_bereit = lambda: gekoppelt.append(d.worker_token())
++    d.starten()
++    assert d.warten_bis_bereit(15)
++    for _ in range(50):
++        if gekoppelt:
++            break
++        time.sleep(0.05)
++    assert gekoppelt == ["wk.ersatz.1"]  # zweiter Start, neuer Schlüssel
++    assert any("unerwartet beendet" in z for z in d.zeilen)
++
++
++def test_belegter_anschluss_wird_erkannt(ersatz, monkeypatch):
++    monkeypatch.setenv("ERSATZ_MODUS", "belegt")
++    d = ersatz()
++    d.starten()
++    for _ in range(100):
++        if d.zustand["art"] == "fehler":
++            break
++        time.sleep(0.05)
++    assert d.zustand == {**d.zustand, "art": "fehler", "code": "anschluss_belegt"}
++    assert not d.warten_bis_bereit(0.5)
++
++
++def test_umgebung_des_servers(monkeypatch):
++    from taleward_worker import einzelplatz, pfade
++
++    monkeypatch.setenv("DATABASE_URL", "sqlite:///fremd.db")
++    monkeypatch.setenv("TALEWARD_STARTSCHLUESSEL", "von-aussen-" + "x" * 40)
++    monkeypatch.setenv("PUBLIC_URL", "https://fremd.example")
++    env = einzelplatz.ServerDienst(befehl=["x"]).umgebung()
++    assert env["TALEWARD_EINZELPLATZ"] == "1" and env["DATA_DIR"] == str(pfade.einzelplatz_daten())
++    assert env["EINZELPLATZ_WORKER_DATEI"] == str(pfade.worker_schluessel())
++    assert env["LOCAL_WORKER_AUTOSTART"] == "false"
++    for name in ("DATABASE_URL", "TALEWARD_STARTSCHLUESSEL", "PUBLIC_URL", "TALEWARD_STARTSCHLUESSEL_DATEI"):
++        assert name not in env
++
++
++# ---------------------------------------------------------------- Neueste freigegebene Fassung
++def test_neueste_fassung(monkeypatch):
++    from taleward_worker import freigabe, motor
++
++    freigegeben = {"v0.4.95", "v0.4.94"}
++    geprueft = []
++
++    def von_github(repo, tag, user_agent=""):
++        geprueft.append(tag)
++        if tag not in freigegeben:
++            raise freigabe.FreigabeFehler("nicht freigegeben")
++        return freigabe.Freigabe(repo, tag, "a" * 40)
++    monkeypatch.setattr(freigabe, "von_github", von_github)
++    releases = [{"tag_name": "v0.4.96"}, {"tag_name": "v0.4.95"}, {"tag_name": "v0.4.94"},
++                {"tag_name": "v0.5.0", "prerelease": True}, {"tag_name": "worker-v9.9.9"}, {"tag_name": "v0.4.100",
++                                                                                         "draft": True}]
++    k = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=releases)))
++    assert motor.neueste_fassung(k) == "0.4.95"  # 0.4.96 ist noch nicht freigegeben
++    assert geprueft == ["v0.4.96", "v0.4.95"]
++    # nie unter die laufende Fassung
++    assert motor.neueste_fassung(k, mindestens="0.4.97") == "0.4.97"
++    freigegeben.clear()
++    with pytest.raises(motor.MotorFehler) as e:
++        motor.neueste_fassung(k)
++    assert e.value.code == "nicht_freigegeben"
++
++
++def test_neueste_fassung_ohne_netz():
++    from taleward_worker import motor
++
++    def kaputt(r):
++        raise httpx.ConnectError("weg")
++    k = httpx.Client(transport=httpx.MockTransport(kaputt))
++    with pytest.raises(motor.MotorFehler) as e:
++        motor.neueste_fassung(k)
++    assert e.value.code == "github_nicht_erreichbar"
++
++
++def test_betriebsart_mit_rueckfall():
++    from taleward_worker.einstellungen import Einstellungen
++
++    assert Einstellungen().art == ""
++    assert Einstellungen(server="https://x.example", token="wk.a.b").art == "verbunden"
++    assert Einstellungen(server="https://x.example").art == ""  # entkoppelt: wieder die Wahl
++    e = Einstellungen(betrieb="einzelplatz")
++    assert e.art == "einzelplatz" and e.einzelplatz and e.fuer_oberflaeche()["art"] == "einzelplatz"
++
++
++def test_einzelplatz_braucht_neue_serverfassung(monkeypatch):
++    from taleward_worker import motor
++
++    monkeypatch.setattr(motor, "neueste_fassung", lambda: "0.4.95")
++    inst = motor.Installation("", neueste=True)
++    inst._lauf()
++    assert inst.phase == "fehler" and inst.fehler == "einzelplatz_zu_alt"
+diff --git a/tests/test_robustheit.py b/tests/test_robustheit.py
+index d3c8bed..9a150c7 100644
+--- a/tests/test_robustheit.py
++++ b/tests/test_robustheit.py
+@@ -313,5 +313,5 @@ def test_installer_kann_die_app_hoeflich_beenden(eigener_ordner):
+     srv = einzeln.lauschen(lambda: gezeigt.append(1), lambda: beendet.append(1))
+     try:
+-        assert einzeln.andere_wecken() and gezeigt == [1]
++        assert einzeln.andere_wecken() and _warten(lambda: gezeigt == [1])  # der Lauscher ist ein eigener Faden
+         assert einzeln._senden(einzeln.ABSCHIED)
+         assert _warten(lambda: beendet == [1])
+-- 
+2.43.0
+
