@@ -312,7 +312,7 @@ def test_installer_kann_die_app_hoeflich_beenden(eigener_ordner):
     gezeigt, beendet = [], []
     srv = einzeln.lauschen(lambda: gezeigt.append(1), lambda: beendet.append(1))
     try:
-        assert einzeln.andere_wecken() and gezeigt == [1]
+        assert einzeln.andere_wecken() and _warten(lambda: gezeigt == [1])  # der Lauscher ist ein eigener Faden
         assert einzeln._senden(einzeln.ABSCHIED)
         assert _warten(lambda: beendet == [1])
         assert einzeln.sperren()  # außerhalb von Windows immer frei

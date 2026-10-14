@@ -89,6 +89,52 @@ def quelle(fassung: str) -> dict:
     return _adressen(tag, f.commit)
 
 
+def neueste_fassung(klient: httpx.Client | None = None, mindestens: str | None = None) -> str:
+    """„Alles auf diesem PC“: Es gibt keinen Server, der die Fassung nennt – also die neueste freigegebene
+    Server-Fassung bei GitHub. Zählt nur, wofür eine gültige Freigabe vorliegt (ohne Freigabe weiter suchen, nie ein
+    Rückfall unter `mindestens`, die laufende Fassung)."""
+    from taleward_worker.selbstupdate import neuer
+
+    eigen = os.environ.get("TALEWARD_MOTOR_FASSUNG")  # Entwicklung
+    if eigen:
+        return eigen
+    eigener_klient = klient is None
+    klient = klient or httpx.Client(timeout=20, follow_redirects=True,
+                                    headers={"User-Agent": f"TalewardWorker/{VERSION}",
+                                             "Accept": "application/vnd.github+json"})
+    try:
+        r = klient.get(f"https://api.github.com/repos/{REPO}/releases", params={"per_page": 30})
+        r.raise_for_status()
+        eintraege = r.json()
+    except httpx.HTTPError as e:
+        raise MotorFehler(_netzcode(e)) from None
+    except ValueError:
+        raise MotorFehler("github_nicht_erreichbar") from None
+    finally:
+        if eigener_klient:
+            klient.close()
+    fassungen = []
+    for e in eintraege if isinstance(eintraege, list) else []:
+        tag = str(e.get("tag_name") or "") if isinstance(e, dict) else ""
+        m = re.fullmatch(r"v(\d{1,4}\.\d{1,4}\.\d{1,4})", tag)
+        if m and not e.get("draft") and not e.get("prerelease"):
+            fassungen.append(m.group(1))
+    fassungen.sort(key=lambda v: tuple(int(x) for x in v.split(".")), reverse=True)
+    for fassung in fassungen[:6]:
+        if mindestens and neuer(mindestens, fassung):
+            break  # nie zurück unter die laufende Fassung
+        try:
+            freigabe.von_github(REPO, f"v{fassung}", user_agent=f"TalewardWorker/{VERSION}")
+        except freigabe.FreigabeFehler:
+            continue  # noch nicht freigegeben – die nächstältere prüfen
+        except httpx.HTTPError as e:
+            raise MotorFehler(_netzcode(e)) from None
+        return fassung
+    if mindestens:
+        return mindestens
+    raise MotorFehler("nicht_freigegeben", "Keine freigegebene Fassung gefunden.")
+
+
 def _adressen(tag: str, commit: str) -> dict:
     return {"ref": tag, "genau": True, "commit": commit,
             "paket": f"https://github.com/{REPO}/archive/{commit}.zip",
@@ -101,6 +147,7 @@ class Installation:
     fassung: str
     testmodus: bool = False
     backend: str = "cuda"         # "cuda" (NVIDIA) oder "cpu" (nur Prozessor, deutlich kleiner)
+    neueste: bool = False         # Alles auf diesem PC: Fassung = neueste freigegebene bei GitHub
     phase: str = "start"          # start, python, pakete, taleward, ffmpeg, fertig, fehler, abgebrochen
     anteil: float = 0.0
     geladen_mb: int = 0
@@ -189,6 +236,15 @@ class Installation:
                 del self.zeilen[:-400]
 
     def _installieren(self) -> None:
+        if not self.fassung and self.neueste:
+            from taleward_worker.einzelplatz import MINDEST_SERVER
+            from taleward_worker.selbstupdate import neuer
+
+            self.phase = "suchen"
+            fassung = neueste_fassung()
+            if neuer(MINDEST_SERVER, fassung):
+                raise MotorFehler("einzelplatz_zu_alt", f"Neueste freigegebene Fassung: {fassung}")
+            self.fassung = fassung
         q = quelle(self.fassung)
         self.zeilen.append(f"Fassung {self.fassung} → {q['ref']}" + (f" ({q['commit'][:12]}, freigegeben)"
                                                                     if q.get("commit") else ""))

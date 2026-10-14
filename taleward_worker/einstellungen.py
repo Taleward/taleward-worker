@@ -30,11 +30,26 @@ class Einstellungen:
     motor_fassung: str = ""         # installierte Fassung des KI-Pakets (= Serverfassung)
     motor_art: str = ""             # "ki" oder "test"
     sprache: str = ""               # leer = Systemsprache
+    betrieb: str = ""               # "" = noch nicht gewählt | verbunden | einzelplatz („Alles auf diesem PC“)
+    konto_angelegt: bool = False    # Einzelplatz: Konto der SL angelegt
+    anmeldename: str = ""           # Einzelplatz: zum Anzeigen („Dein Anmeldename“)
+    firewall_gefragt: bool = False  # Einzelplatz: Netzwerk-Freigabe einmal von selbst angeboten
     hinweis_hintergrund_gezeigt: bool = False
 
     @property
     def gekoppelt(self) -> bool:
         return bool(self.server and self.token)
+
+    @property
+    def einzelplatz(self) -> bool:
+        return self.betrieb == "einzelplatz"
+
+    @property
+    def art(self) -> str:
+        """Betriebsart mit Rückfall für ältere Einstellungen (vor 0.3.0 gab es nur „verbunden“)."""
+        if self.betrieb in ("verbunden", "einzelplatz"):
+            return self.betrieb
+        return "verbunden" if self.server and self.token else ""
 
     def speichern(self) -> None:
         """Sicher schreiben: erst in eine Nebendatei, auf die Platte zwingen (fsync – sonst kann nach einem
@@ -71,6 +86,7 @@ class Einstellungen:
         d = asdict(self)
         d.pop("token")
         d["gekoppelt"] = self.gekoppelt
+        d["art"] = self.art
         return d
 
 

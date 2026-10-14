@@ -62,6 +62,41 @@ def einstellungen() -> Path:
     return basis() / "einstellungen.json"
 
 
+def einzelplatz_daten() -> Path:
+    """„Alles auf diesem PC“: Daten von Taleward (Kampagnen, Aufnahmen, Konten) – getrennt vom Programm, damit sie
+    ein Neuinstallieren überstehen. Windows: %LOCALAPPDATA%\\Taleward\\Daten (wie der Server es selbst vorsieht)."""
+    if os.environ.get("TALEWARD_WORKER_HOME"):
+        p = basis() / "daten"
+    elif WINDOWS:
+        p = Path(user_data_dir("Taleward", appauthor=False, roaming=False)) / "Daten"
+    else:
+        p = Path(user_data_dir("taleward", appauthor=False))
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def startschluessel() -> Path:
+    """Einmaliger Schlüssel für das erste Konto – der Server liest und löscht die Datei beim Start."""
+    return basis() / "start.key"
+
+
+def worker_schluessel() -> Path:
+    """Schlüssel des Workers – der Server schreibt ihn bei jedem Start neu."""
+    return basis() / "worker.key"
+
+
+def server_stopp() -> Path:
+    """Liegt diese Datei, beendet sich der Server geordnet."""
+    return basis() / "server.stopp"
+
+
+def fenster_speicher() -> Path:
+    """Speicher des Programmfensters (Anmeldung der App, Aufnahmen bis zum Hochladen)."""
+    p = basis() / "fenster"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
 def ressourcen() -> Path:
     """Mitgelieferte Dateien (Oberfläche, Symbole, uv). Im PyInstaller-Paket unter sys._MEIPASS."""
     wurzel = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
