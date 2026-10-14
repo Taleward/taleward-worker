@@ -233,15 +233,29 @@
     karte.hidden = !einzelplatz();
     if (!einzelplatz()) return;
     const tw = S.taleward || {}, z = tw.zustand || {}, art = z.art || "gestoppt";
-    $("#taleward-titel").textContent = t("tw_" + art);
-    $("#taleward-text").textContent = art === "fehler" ? t("tw_f_" + (z.code || "startet_nicht"))
+    const upd = tw.update || {}, imUpdate = ["vorbereiten", "sichern", "tauschen", "starten", "pruefen", "zurueck"].includes(upd.phase);
+    const werte = { neu: upd.neu || upd.angebot || "", alt: upd.alt || "",
+                    prozent: upd.anteil != null ? Math.round(upd.anteil * 100) + " %" : "…" };
+    $("#taleward-titel").textContent = imUpdate && upd.phase !== "vorbereiten" ? t("tw_upd") : t("tw_" + art);
+    $("#taleward-text").textContent = imUpdate && upd.phase !== "vorbereiten" ? t("tw_upd_" + upd.phase, werte)
+      : art === "fehler" ? t("tw_f_" + (z.code || "startet_nicht"))
       : art === "laeuft" && tw.appFehlt ? t("tw_app_fehlt")
       : art === "laeuft" && !tw.app ? t("tw_app_laedt")
       : art === "laeuft" ? t("tw_laeuft_text", { name: S.einstellungen.anmeldename || "–" })
       : art === "abgestuerzt" ? t("tw_abgestuerzt_text", { wann: wann(z.neuerVersuch) }) : t("tw_" + art + "_text");
     $("#taleward-oeffnen").disabled = !tw.app;
     $("#taleward-browser").disabled = !tw.app;
-    $("#taleward-neustart").hidden = art !== "fehler";
+    $("#taleward-neustart").hidden = art !== "fehler" || imUpdate;
+    const um = $("#taleward-update");
+    const hinweis_upd = upd.phase === "vorbereiten" ? t("tw_upd_vorbereiten", werte)
+      : upd.phase === "zurueckgenommen" ? t("tw_upd_zurueckgenommen", werte)
+      : upd.phase === "fehler" ? t("tw_upd_fehler", werte)
+      : upd.phase === "fertig" ? t("tw_upd_fertig", werte)
+      : !imUpdate && upd.angebot ? t(S.einstellungen.auto_update && upd.angebot !== upd.gescheitert ? "tw_upd_angebot_auto" : "tw_upd_angebot", werte) : "";
+    um.hidden = !hinweis_upd;
+    um.textContent = hinweis_upd;
+    um.className = "meldung" + (upd.phase === "zurueckgenommen" || upd.phase === "fehler" ? " meldung--hinweis" : "");
+    $("#taleward-aktualisieren").hidden = imUpdate || !upd.angebot;
     const netz = tw.netz || {};
     const oeffentlich = (netz.profile || []).includes("Public") && !(netz.profile || []).includes("Private");
     const ohneRegel = netz.noetig && netz.regel === false;
@@ -474,6 +488,11 @@
     $("#taleward-oeffnen").onclick = () => api.taleward_oeffnen();
     $("#taleward-browser").onclick = () => api.im_browser_oeffnen();
     $("#taleward-neustart").onclick = () => { api.taleward_neu_starten(); setTimeout(neuLaden, 300); };
+    $("#taleward-aktualisieren").onclick = async () => {
+      const r = await api.taleward_aktualisieren();
+      if (!r.ok) toast(t(r.grund === "aktuell" ? "tw_upd_aktuell" : "tw_upd_spaeter"));
+      neuLaden();
+    };
     $("#netz-freigeben").onclick = async () => {
       const r = await api.netz_freigeben();
       if (!r.ok) toast(t("netz_abgelehnt"));

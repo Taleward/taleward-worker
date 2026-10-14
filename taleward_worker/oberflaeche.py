@@ -11,7 +11,7 @@ import time
 import webbrowser
 
 from taleward_worker import (VERSION, autostart, einzelplatz, fenster, hardware, motor, netzfreigabe, ollama, pfade,
-                             selbstupdate, server)
+                             selbstupdate, server, serverupdate)
 from taleward_worker.dienst import Dienst
 from taleward_worker.einstellungen import Einstellungen
 
@@ -38,7 +38,8 @@ class Api:
             "appUpdate": a.app_update.stand() if a.app_update else None, "trayVorhanden": a.tray is not None,
             "entwicklung": bool(os.environ.get("TALEWARD_MOTOR")),
             "ollama": a.ollama_stand(),
-            "taleward": {**a.server.fuer_oberflaeche(), "netz": a.netz} if a.e.einzelplatz else None,
+            "taleward": {**a.server.fuer_oberflaeche(), "netz": a.netz, "update": a.ep_update.fuer_oberflaeche()}
+            if a.e.einzelplatz else None,
         }
 
     # -- Alles auf diesem PC
@@ -91,7 +92,13 @@ class Api:
         return self._app.netz or {}
 
     def taleward_neu_starten(self) -> None:
-        threading.Thread(target=self._app.server_neu_starten, daemon=True).start()
+        if not self._app.ep_update.laeuft():
+            threading.Thread(target=self._app.server_neu_starten, daemon=True).start()
+
+    def taleward_aktualisieren(self) -> dict:
+        if not self._app.e.einzelplatz:
+            return {"ok": False, "grund": "aktuell"}
+        return self._app.ep_update.jetzt()
 
     def hardware_pruefen(self) -> dict:
         self._app.hardware = hardware.bericht()
@@ -270,6 +277,7 @@ class WorkerApp:
         self.e = Einstellungen.laden()
         self.dienst = Dienst(self.e)
         self._server: einzelplatz.ServerDienst | None = None  # erst bei „Alles auf diesem PC“
+        self._update: serverupdate.ServerUpdate | None = None
         self.app_fenster = None
         self.netz: dict | None = None  # Firewall und Netzprofil (Einzelplatz, Windows) – langsam, darum zwischengespeichert
         self.installation: motor.Installation | None = None
@@ -303,6 +311,13 @@ class WorkerApp:
             self._server = einzelplatz.ServerDienst()
             self._server.bei_bereit = self._worker_koppeln
         return self._server
+
+    @property
+    def ep_update(self) -> serverupdate.ServerUpdate:
+        """Updates von Taleward auf diesem PC – wie der Server nur bei „Alles auf diesem PC“ angelegt."""
+        if self._update is None:
+            self._update = serverupdate.ServerUpdate(self)
+        return self._update
 
     def taleward_starten(self) -> None:
         """Server aus dem KI-Paket starten; sobald er antwortet, koppelt sich der Worker (_worker_koppeln)."""
@@ -415,6 +430,8 @@ class WorkerApp:
     def installieren(self, testmodus: bool) -> None:
         if self.installation and self.installation.phase not in ("fertig", "fehler", "abgebrochen"):
             return
+        if self._update is not None and self._update.laeuft():
+            return
         self.e.testmodus = testmodus
         self.e.speichern()
         fehlt_gb = motor.platz_fehlt_gb(testmodus, "cpu" if self.e.geraet == "cpu" else "cuda")
@@ -445,21 +462,30 @@ class WorkerApp:
                 self.dienst.starten()
 
         backend = "cpu" if self.e.geraet == "cpu" else "cuda"
-        # Alles auf diesem PC: kein Server nennt die Fassung – die neueste freigegebene von GitHub
-        fassung = "" if self.e.einzelplatz else (self.server_version or "")
+        # Alles auf diesem PC: kein Server nennt die Fassung. Erstinstallation → die neueste freigegebene von GitHub;
+        # Neu installieren → dieselbe Fassung wie bisher (eine neue kommt nur über das Update mit Sicherung)
+        if self.e.einzelplatz:
+            fassung = str((motor.installiert() or {}).get("fassung") or "") if not testmodus else ""
+        else:
+            fassung = self.server_version or ""
         self.installation = motor.Installation(fassung, testmodus=testmodus, backend=backend,
-                                               vor_tausch=vor, nach_tausch=nach, neueste=self.e.einzelplatz)
+                                               vor_tausch=vor, nach_tausch=nach,
+                                               neueste=self.e.einzelplatz and not fassung)
         self.installation.starten()
 
     def _motor_pruefen(self, erster: bool) -> None:
         """Serverfassung abfragen; passt das KI-Paket nicht mehr, im Hintergrund nachziehen (nur ohne Auftrag)."""
         if self.e.einzelplatz:
-            # Alles auf diesem PC: Taleward starten, der Worker folgt (Updates kommen in einem eigenen Schritt)
+            # Alles auf diesem PC: Taleward starten, der Worker folgt; Updates mit Sicherung und Rückweg
+            if self.ep_update.laeuft():
+                return  # das Update hält Taleward bewusst an
             laeuft_installation = self.installation and self.installation.phase not in ("fertig", "fehler",
                                                                                          "abgebrochen")
             if not laeuft_installation and not self.server.laeuft() and self.server.zustand.get("art") in (
                     "gestoppt",) and (motor.installiert() or os.environ.get("TALEWARD_MOTOR")):
                 self.taleward_starten()
+            if not laeuft_installation:
+                self.ep_update.wenn_faellig()
             return
         self.fassung_abfragen()
         if not self.e.gekoppelt:
@@ -533,7 +559,8 @@ class WorkerApp:
         if not u or u.phase != "bereit" or not self.e.auto_update or not selbstupdate.selbst_installierbar():
             return
         beschaeftigt = self.dienst.zustand.get("art") == "arbeitet" or (
-            self.installation and self.installation.phase not in ("fertig", "fehler", "abgebrochen"))
+            self.installation and self.installation.phase not in ("fertig", "fehler", "abgebrochen")) or (
+            self._update is not None and self._update.laeuft())
         if not beschaeftigt:
             self.selbst_aktualisieren()
 
@@ -619,7 +646,8 @@ class WorkerApp:
 
             art = self.dienst.zustand.get("art", "gestoppt")
             self.tray.icon = symbol(art)
-            self.tray.title = tray_titel(self.dienst.fuer_oberflaeche(), self.e.sprache)
+            self.tray.title = tray_titel(self.dienst.fuer_oberflaeche(), self.e.sprache,
+                                         self._update is not None and self._update.laeuft())
             self.tray.update_menu()
         except Exception:  # noqa: BLE001 – Infobereich ist Beiwerk
             log.debug("Infobereich nicht aktualisiert", exc_info=True)
@@ -711,8 +739,10 @@ class WorkerApp:
                 pass
 
 
-def tray_titel(d: dict, sprache: str) -> str:
+def tray_titel(d: dict, sprache: str, update: bool = False) -> str:
     en = sprache.startswith("en")
+    if update:
+        return "Taleward – " + ("Updating …" if en else "Wird aktualisiert …")
     z = d["zustand"]
     art = z.get("art")
     texte = {

@@ -1,6 +1,6 @@
 [project]
 name = "taleward-worker"
-version = "0.3.1"
+version = "0.3.2"
 description = "Taleward Worker – verarbeitet Aufnahmen für einen Taleward-Server auf dem eigenen PC mit Grafikkarte"
 license = "AGPL-3.0-only"
 requires-python = ">=3.11,<3.14"
