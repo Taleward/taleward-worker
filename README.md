@@ -22,7 +22,8 @@ herunterladen und starten. Administratorrechte sind nicht nötig.
 - etwa 16 GB freier Speicher (KI-Paket etwa 8 GB, Sprachmodell einige GB)
 
 Die App liegt unter `%LOCALAPPDATA%\Programs\Taleward Worker`; KI-Paket, Modelle, Einstellungen und Protokoll unter
-`%LOCALAPPDATA%\Taleward Worker`. Beim Deinstallieren fragt der Installer, ob diese Daten auch weg sollen.
+`%LOCALAPPDATA%\Taleward Worker`. Beim Deinstallieren fragt der Installer, ob diese Daten auch weg sollen, und
+getrennt davon, ob auch die Kampagnen von „Alles auf diesem PC“ gelöscht werden (standardmäßig bleiben sie).
 
 ### Linux
 
@@ -60,6 +61,12 @@ QR-Code bei.
 - Das Fenster hat keinen Zugriff auf die App selbst, öffnet nur Seiten von Taleward auf diesem PC (alles andere im
   Browser) und darf nur das Mikrofon nutzen.
 - Die Verbindung im WLAN ist nicht verschlüsselt – gedacht für das eigene WLAN.
+- **Betriebsart wechseln** (Einstellungen) geht in beide Richtungen; die Kampagnen bleiben auf dem PC.
+- **Sicherung speichern / zurückspielen** (Einstellungen): eine Datei mit allen Kampagnen, mit Passwort verschlüsselt –
+  auch zum Umzug auf einen neuen PC.
+- **Hilfe-Datei erstellen** (Protokoll): Fassungen, System und Protokolle ohne Schlüssel, Passwörter und E-Mail-Adressen;
+  die App zeigt vor dem Speichern genau, was in der Datei steht.
+- Unter Windows liegen die Schlüssel der App mit dem Windows-Datenschutz geschützt (nur für den eigenen Windows-Nutzer).
 
 ## Was die App kann
 
@@ -75,7 +82,9 @@ QR-Code bei.
 - **Schieberegler „Grafikspeicher für Taleward“:** legt fest, wie viel Grafikspeicher der Worker höchstens nutzt; der
   Rest bleibt für anderes. Nach jedem Auftrag zeigt die App Dauer und höchsten Grafikspeicher als gemessene Werte.
 - **Immer passend zum Server:** Das KI-Paket wird in genau der Fassung des Servers installiert (der freigegebene Commit
-  zum Git-Tag `v<Fassung>` im Server-Repository) und zieht nach einem Server-Update selbst nach.
+  zum Git-Tag `v<Fassung>` im Server-Repository) und zieht nach einem Server-Update selbst nach. Die Pakete kommen mit
+  den Prüfsummen aus `uv.lock` dieses Commits (`--require-hashes`); nur PyTorch selbst (torch, torchaudio,
+  torchvision) kommt in der Variante für die Grafikkarte auf eine feste Version festgelegt, ohne Prüfsumme.
 - **Updates über den eigenen Server:** Die App fragt nur ihren Taleward-Server nach neuen Fassungen. Unter
   Windows installiert sie sie still, sobald sie nichts zu tun hat; unter Linux über `uv tool install`. Abschaltbar in
   den Einstellungen.

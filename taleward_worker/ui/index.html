@@ -52,8 +52,12 @@
       <div class="meldung meldung--hinweis" data-t="wlan_hinweis"></div>
       <div class="meldung meldung--fehler" id="konto-fehler" hidden></div>
       <p class="hilfe" id="konto-wartet" data-t="taleward_startet_noch" hidden></p>
-      <div class="knopfreihe knopfreihe--ende"><button class="tw-btn tw-btn--primary" id="konto-anlegen" data-t="Konto anlegen"></button></div>
+      <div class="meldung" id="konto-sicherung-stand" role="status" hidden></div>
+      <div class="knopfreihe knopfreihe--ende">
+        <button class="tw-btn tw-btn--quiet" id="konto-sicherung" data-t="Sicherung zurückspielen"></button>
+        <button class="tw-btn tw-btn--primary" id="konto-anlegen" data-t="Konto anlegen"></button></div>
     </div>
+    <p class="hilfe" data-t="konto_sicherung_hilfe"></p>
   </div>
 
   <div data-seite="1">
@@ -218,6 +222,20 @@
       <button class="tw-btn tw-btn--secondary" id="verwaltung" data-t="Verwaltung öffnen"></button>
       <button class="tw-btn tw-btn--secondary" id="ollama-entfernen" data-t="ollama_entfernen" hidden></button></div>
   </div>
+  <div class="karte" id="sicherung-karte" hidden>
+    <h2 data-t="Sicherung"></h2>
+    <p class="leise" data-t="sicherung_text"></p>
+    <div class="meldung" id="sicherung-stand" role="status" hidden></div>
+    <div class="knopfreihe">
+      <button class="tw-btn tw-btn--secondary" id="sicherung-speichern" data-t="Sicherung speichern"></button>
+      <button class="tw-btn tw-btn--secondary" id="sicherung-zurueck" data-t="Sicherung zurückspielen"></button>
+    </div>
+  </div>
+  <div class="karte">
+    <h2 data-t="Betriebsart"></h2>
+    <p class="leise" id="betrieb-jetzt"></p>
+    <div class="knopfreihe"><button class="tw-btn tw-btn--secondary" id="betrieb-wechseln" data-t="Betriebsart wechseln"></button></div>
+  </div>
   <div class="karte gefahr">
     <h2 data-t="Verbindung und KI-Paket"></h2>
     <p class="leise klein" data-t="gefahr_text"></p>
@@ -235,10 +253,44 @@
   <pre class="log" id="log"></pre>
   <div class="knopfreihe"><button class="tw-btn tw-btn--secondary" id="log-kopieren" data-t="Kopieren"></button>
     <button class="tw-btn tw-btn--secondary" id="log-ordner" data-t="Ordner öffnen"></button>
+    <button class="tw-btn tw-btn--secondary" id="hilfe-erstellen" data-t="Hilfe-Datei erstellen"></button>
     <button class="tw-btn tw-btn--quiet" data-zurueck data-t="Zurück"></button></div>
 </section>
 </main>
 <div class="toast" id="toast" hidden></div>
+
+<!-- ============================================================ Rückfragen -->
+<dialog class="dialog" id="dialog" aria-labelledby="dialog-titel">
+  <h2 id="dialog-titel"></h2>
+  <div data-dialog="betrieb">
+    <p id="betrieb-frage"></p>
+    <p class="leise klein" id="betrieb-folge"></p>
+  </div>
+  <div data-dialog="speichern">
+    <p class="leise" data-t="sicherung_speichern_text"></p>
+    <label class="feld"><span data-t="Passwort für die Sicherung"></span>
+      <input id="sich-passwort" type="password" autocomplete="new-password">
+      <span class="hilfe" data-t="sicherung_passwort_hilfe"></span></label>
+    <label class="feld"><span data-t="Passwort wiederholen"></span>
+      <input id="sich-passwort2" type="password" autocomplete="new-password"></label>
+  </div>
+  <div data-dialog="zurueck">
+    <p class="leise" data-t="sicherung_zurueck_text"></p>
+    <div class="zeile"><div class="zeile__text"><strong data-t="Datei"></strong><span id="zurueck-datei"></span></div>
+      <button class="tw-btn tw-btn--secondary" id="zurueck-waehlen" type="button" data-t="Datei wählen"></button></div>
+    <label class="feld"><span data-t="Passwort der Sicherung"></span>
+      <input id="zurueck-passwort" type="password" autocomplete="off"></label>
+  </div>
+  <div data-dialog="hilfe">
+    <p class="leise klein" data-t="hilfe_text"></p>
+    <textarea id="hilfe-vorschau" readonly spellcheck="false" aria-labelledby="dialog-titel"></textarea>
+  </div>
+  <div class="meldung meldung--fehler" id="dialog-fehler" role="alert" hidden></div>
+  <div class="knopfreihe knopfreihe--ende">
+    <button class="tw-btn tw-btn--quiet" id="dialog-abbrechen" type="button" data-t="Abbrechen"></button>
+    <button class="tw-btn tw-btn--primary" id="dialog-ok" type="button"></button>
+  </div>
+</dialog>
 <script src="texte.js"></script>
 <script src="app.js"></script>
 </body>

@@ -95,7 +95,7 @@
       li.dataset.stand = pos < aktuell ? "fertig" : pos === aktuell ? "aktiv" : "";
     });
     $$("[data-seite]").forEach((el) => { el.hidden = Number(el.dataset.seite) !== nr; });
-    if (nr === 5) kontoZeigen();
+    if (nr === 5) { kontoZeigen(); sicherungZeigen(); }
     if (nr === 4) {
       $("#fertig-text").textContent = einzelplatz() ? t("fertig_text_einzelplatz", { name: S.einstellungen.anmeldename || "–" })
         + (S.taleward && !S.taleward.app ? " " + t("tw_app_laedt") : "") : t("fertig_text");
@@ -382,12 +382,105 @@
     });
     $("#fuss-version").textContent = "Taleward " + S.version;
     $("#neu-koppeln").hidden = einzelplatz();
+    $("#betrieb-jetzt").textContent = einzelplatz() ? t("betrieb_jetzt_einzelplatz")
+      : t("betrieb_jetzt_verbunden", { server: serverName() });
+    $("#sicherung-karte").hidden = !einzelplatz();
+    sicherungZeigen();
     const k = S.hardware && S.hardware.grafikkarte;
     $("#zeile-prozessor").hidden = !(k && S.hardware.grafikkarteNutzbar) || S.einstellungen.testmodus;
     $("#zeile-recaps").hidden = !!S.einstellungen.testmodus;
     ollamaZeigen();
     if (document.activeElement !== $("#nur-prozessor")) $("#nur-prozessor").checked = S.einstellungen.geraet === "cpu";
     reglerZeigen();
+  }
+
+  const serverName = () => (S && (S.serverName || S.einstellungen.server)) || t("dem Server");
+
+  // ------------------------------------------------------------ Sicherung
+  function sicherungText() {
+    const s = S && S.taleward && S.taleward.sicherung;
+    if (!s || !s.phase) return null;
+    if (s.phase === "speichern") return ["", t("sich_laeuft_speichern")];
+    if (s.phase === "zurueckspielen") return ["", t("sich_laeuft_zurueck")];
+    if (s.phase === "fertig") return ["", t(s.art === "speichern" ? "sich_fertig_speichern" : "sich_fertig_zurueck", { datei: s.datei })];
+    return ["meldung--fehler", t("sich_f_" + s.fehler) !== "sich_f_" + s.fehler ? t("sich_f_" + s.fehler) : t("sich_f_unbekannt")];
+  }
+  let sicherungZuletzt = "";
+  function sicherungZeigen() {
+    const x = sicherungText();
+    const s = S.taleward && S.taleward.sicherung;
+    const kennung = s ? s.phase + "|" + s.art + "|" + s.datei : "";
+    if (kennung !== sicherungZuletzt && sicherungZuletzt && s && ["fertig", "fehler"].includes(s.phase)) toast(x[1]);
+    sicherungZuletzt = kennung;
+    ["#sicherung-stand", "#konto-sicherung-stand"].forEach((id) => {
+      const el = $(id);
+      el.hidden = !x;
+      if (x) { el.className = "meldung " + x[0]; el.textContent = x[1]; }
+    });
+    const laeuft = !!(S.taleward && S.taleward.sicherung && ["speichern", "zurueckspielen"].includes(S.taleward.sicherung.phase));
+    ["#sicherung-speichern", "#sicherung-zurueck", "#konto-sicherung"].forEach((id) => { $(id).disabled = laeuft; });
+  }
+
+  // ------------------------------------------------------------ Rückfragen
+  let dialogArt = null;
+  function dialogOeffnen(art, titel, okText, okStil) {
+    dialogArt = art;
+    $("#dialog-titel").textContent = titel;
+    $$("[data-dialog]").forEach((el) => { el.hidden = el.dataset.dialog !== art; });
+    $("#dialog-fehler").hidden = true;
+    const ok = $("#dialog-ok");
+    ok.textContent = okText; ok.className = "tw-btn tw-btn--" + (okStil || "primary"); ok.disabled = false;
+    const d = $("#dialog");
+    if (!d.open) d.showModal();
+    const erstes = d.querySelector("[data-dialog=\"" + art + "\"] input, [data-dialog=\"" + art + "\"] textarea");
+    (erstes || ok).focus();
+  }
+  function dialogFehler(text) { const f = $("#dialog-fehler"); f.textContent = text; f.hidden = false; }
+  function dialogZu() { const d = $("#dialog"); if (d.open) d.close(); }
+  function feldfehler(praefix, code) {
+    return t(praefix + code) !== praefix + code ? t(praefix + code) : t(praefix + "unbekannt");
+  }
+  function betriebFragen() {
+    const zu = einzelplatz() ? "verbunden" : "einzelplatz";
+    if (zu === "einzelplatz") {
+      $("#betrieb-frage").textContent = S.einstellungen.gekoppelt ? t("betrieb_zu_einzelplatz", { server: serverName() }) : t("betrieb_zu_einzelplatz_ohne");
+      $("#betrieb-folge").textContent = S.einstellungen.gekoppelt ? t("betrieb_zu_einzelplatz_folge", { server: serverName() }) : "";
+    } else {
+      $("#betrieb-frage").textContent = t("betrieb_zu_verbunden");
+      $("#betrieb-folge").textContent = t("betrieb_zu_verbunden_folge");
+    }
+    dialogOeffnen("betrieb", t(zu === "einzelplatz" ? "betrieb_titel_einzelplatz" : "betrieb_titel_verbunden"), t("Wechseln"));
+    $("#dialog-ok").dataset.ziel = zu;
+  }
+  function zurueckFragen() {
+    const s = S.taleward && S.taleward.sicherung;
+    $("#zurueck-datei").textContent = (s && s.gewaehlt) || t("noch_keine_datei");
+    dialogOeffnen("zurueck", t("Sicherung zurückspielen"), t("Zurückspielen"));
+  }
+  async function dialogBestaetigen() {
+    const ok = $("#dialog-ok");
+    if (ok.disabled) return;
+    ok.disabled = true;
+    try {
+      if (dialogArt === "betrieb") {
+        const r = await api.betrieb_wechseln(ok.dataset.ziel);
+        if (!r.ok) return dialogFehler(feldfehler("betrieb_f_", r.fehler));
+        dialogZu(); fertigZeigen = false; schritt = null; reiter = "status";
+        setTimeout(neuLaden, 300);
+      } else if (dialogArt === "speichern") {
+        const r = await api.sicherung_speichern($("#sich-passwort").value, $("#sich-passwort2").value);
+        if (!r.ok) { if (r.fehler !== "abgebrochen") dialogFehler(feldfehler("sich_f_", r.fehler)); return; }
+        dialogZu(); neuLaden();
+      } else if (dialogArt === "zurueck") {
+        const r = await api.sicherung_zurueckspielen($("#zurueck-passwort").value);
+        if (!r.ok) return dialogFehler(feldfehler("sich_f_", r.fehler));
+        dialogZu(); neuLaden();
+      } else if (dialogArt === "hilfe") {
+        const r = await api.hilfe_speichern();
+        if (!r.ok) { if (r.fehler !== "abgebrochen") dialogFehler(t("hilfe_f")); return; }
+        dialogZu(); toast(t("hilfe_gespeichert", { datei: r.datei }));
+      }
+    } finally { ok.disabled = false; }
   }
 
   function ollamaZeigen() {
@@ -543,10 +636,30 @@
     $("#log-ordner").onclick = () => api.ordner_oeffnen();
     $("#verwaltung").onclick = () => api.verwaltung_oeffnen();
     $("#ollama-entfernen").onclick = async () => { if (confirm(t("bestaetigen_ollama"))) { await api.ollama_entfernen(); speicherLaden(); neuLaden(); } };
-    $("#neu-koppeln").onclick = async () => { if (confirm(t("bestaetigen_koppeln"))) { await api.entkoppeln(); reiter = "status"; neuLaden(); } };
+    $("#neu-koppeln").onclick = async () => { if (confirm(t("bestaetigen_koppeln", { server: serverName() }))) { await api.entkoppeln(); reiter = "status"; neuLaden(); } };
     $("#neu-installieren").onclick = async () => { await api.installieren(!!S.einstellungen.testmodus); reiter = "status"; zeigeReiter("status"); neuLaden(); };
     $("#entfernen").onclick = async () => { if (confirm(t("bestaetigen_entfernen"))) { await api.ki_entfernen(true); schritt = 2; reiter = "status"; neuLaden(); } };
     $("#beenden").onclick = () => api.beenden();
+    $("#betrieb-wechseln").onclick = betriebFragen;
+    $("#sicherung-speichern").onclick = () => dialogOeffnen("speichern", t("Sicherung speichern"), t("Speichern …"));
+    $("#sicherung-zurueck").onclick = zurueckFragen;
+    $("#konto-sicherung").onclick = zurueckFragen;
+    $("#zurueck-waehlen").onclick = async () => {
+      const r = await api.sicherung_waehlen();
+      if (r.ok) $("#zurueck-datei").textContent = r.datei;
+    };
+    $("#hilfe-erstellen").onclick = async () => {
+      const r = await api.hilfe_vorschau();
+      $("#hilfe-vorschau").value = r.text;
+      dialogOeffnen("hilfe", t("Hilfe-Datei"), t("Speichern …"));
+    };
+    $("#dialog-ok").onclick = dialogBestaetigen;
+    $("#dialog-abbrechen").onclick = dialogZu;
+    $("#dialog").addEventListener("close", () => {
+      ["#sich-passwort", "#sich-passwort2", "#zurueck-passwort"].forEach((id) => { $(id).value = ""; });
+      $("#hilfe-vorschau").value = ""; dialogArt = null;
+    });
+    $$("#dialog input").forEach((el) => el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); dialogBestaetigen(); } }));
     $("#log-kopieren").onclick = () => {
       const text = $("#log").textContent;
       const fertig = () => toast(t("kopiert"));
