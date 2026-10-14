@@ -17,3 +17,14 @@ def _freigabe_testschluessel(monkeypatch):
     from tests.freigabe_hilfe import OEFFENTLICH
 
     monkeypatch.setattr(freigabe, "OEFFENTLICHER_SCHLUESSEL", OEFFENTLICH)
+
+
+@pytest.fixture(autouse=True)
+def _pruefsummen(monkeypatch):
+    """Paketlisten mit Prüfsummen ohne Netz und ohne uv: kleine feste Listen. Die echte Erzeugung prüft
+    test_pruefsummen.py."""
+    from taleward_worker import motor
+
+    basis = "six==1.17.0 \\\n    --hash=sha256:" + "a" * 64 + "\n"
+    ki = basis + "torch==2.8.0 \\\n    --hash=sha256:" + "b" * 64 + "\n"
+    monkeypatch.setattr(motor, "pruefsummen", lambda q, umgebung, ordner: (basis, ki))

@@ -237,6 +237,7 @@ def test_kleine_bibliotheksaenderung_geht_in_den_vorhandenen_motor(eigener_ordne
     """Kommt nur ein kleines Paket dazu (truststore), wird es eingespielt – kein neues 8-GB-Paket."""
     import json
     import subprocess as sp
+    from pathlib import Path
 
     from taleward_worker import motor, pfade
 
@@ -258,12 +259,20 @@ def test_kleine_bibliotheksaenderung_geht_in_den_vorhandenen_motor(eigener_ordne
         return sp.CompletedProcess(befehl, 0, "ok\n", "")
 
     monkeypatch.setattr(motor.subprocess, "run", run)
-    uv = []
-    monkeypatch.setattr(motor.Installation, "_uv", lambda self, *a, **k: uv.append(a))
+    uv, listen = [], []
+
+    def _uv(self, *a, **k):
+        uv.append(a)
+        if "-r" in a:
+            listen.append(Path(a[a.index("-r") + 1]).read_text())
+    monkeypatch.setattr(motor.Installation, "_uv", _uv)
     inst = motor.Installation("0.4.20")
     inst._lauf()
     assert inst.phase == "fertig" and motor.installiert()["fassung"] == "0.4.20"
-    assert len(uv) == 2 and "-r" in uv[0] and "--torch-backend" in uv[0] and "--reinstall" in uv[1]
+    # kleine Pakete nur mit Prüfsummen, nie über das PyTorch-Verzeichnis
+    assert len(uv) == 2 and "-r" in uv[0] and "--require-hashes" in uv[0] and "--torch-backend" not in uv[0]
+    assert "--reinstall" in uv[1]
+    assert "--hash=sha256:" in listen[0] and "torch" not in listen[0]
 
     # torch dabei → vollständige Installation
     monkeypatch.setattr(motor.subprocess, "run",

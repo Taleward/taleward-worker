@@ -4,11 +4,13 @@ Der Motor ist der Taleward-Server-Code in genau der Fassung des verbundenen Serv
 (WhisperX, PyTorch mit CUDA). Die App installiert ihn mit uv in eine eigene Python-Umgebung im Benutzerordner:
 
 1. Python 3.11 (von uv verwaltet, unabhängig von einem installierten Python)
-2. Pakete aus engine-requirements.txt der passenden Fassung (feste Versionen wie auf dem Server getestet);
-   PyTorch in der Variante für die vorhandene Grafikkarte (uv --torch-backend auto)
+2. Pakete in genau den Versionen aus uv.lock der passenden Fassung – mit Prüfsummen: uv lädt nur Dateien, deren
+   Prüfsumme in uv.lock dieses (freigegebenen) Commits steht (--require-hashes). Ausgenommen sind torch, torchaudio
+   und torchvision: Die kommen in der Variante für die Grafikkarte vom PyTorch-Verzeichnis (uv --torch-backend), für
+   diese Dateien stehen keine Prüfsummen in uv.lock; sie sind auf die Version festgelegt.
 3. der Taleward-Code selbst (ohne Abhängigkeiten, die kamen aus Schritt 2) und ffmpeg (imageio-ffmpeg)
 
-Im Testmodus reicht der Taleward-Code mit den Grundpaketen (ein paar MB statt einiger GB).
+Im Testmodus reicht der Taleward-Code mit den Grundpaketen (ein paar MB statt einiger GB), ebenfalls mit Prüfsummen.
 """
 from __future__ import annotations
 
@@ -76,7 +78,8 @@ def quelle(fassung: str) -> dict:
     eigen = os.environ.get("TALEWARD_MOTOR_QUELLE")  # Entwicklung: lokaler Ordner des Server-Codes
     if eigen:
         return {"ref": "lokal", "genau": True, "paket": eigen,
-                "anforderungen": str(Path(eigen) / "engine-requirements.txt")}
+                "anforderungen": str(Path(eigen) / "engine-requirements.txt"),
+                "projekt": str(Path(eigen) / "pyproject.toml"), "lock": str(Path(eigen) / "uv.lock")}
     if not re.fullmatch(r"\d{1,4}\.\d{1,4}\.\d{1,4}", fassung or ""):
         raise MotorFehler("nicht_freigegeben", f"Unbekannte Serverfassung: {fassung!r}"[:200])
     tag = f"v{fassung}"
@@ -136,9 +139,11 @@ def neueste_fassung(klient: httpx.Client | None = None, mindestens: str | None =
 
 
 def _adressen(tag: str, commit: str) -> dict:
+    roh = f"https://raw.githubusercontent.com/{REPO}/{commit}"
     return {"ref": tag, "genau": True, "commit": commit,
             "paket": f"https://github.com/{REPO}/archive/{commit}.zip",
-            "anforderungen": f"https://raw.githubusercontent.com/{REPO}/{commit}/engine-requirements.txt"}
+            "anforderungen": f"{roh}/engine-requirements.txt",
+            "projekt": f"{roh}/pyproject.toml", "lock": f"{roh}/uv.lock"}
 
 
 @dataclass
@@ -272,25 +277,18 @@ class Installation:
         py = str(neu / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python"))
 
         self.phase = "pakete"
-        if self.testmodus:
-            self._uv("pip", "install", "--python", py, q["paket"], "imageio-ffmpeg",
-                     anteil_von=0.06, anteil_bis=0.95, erwartet_mb=self.erwartet_mb)
-        else:
+        geprueft, pytorch = self._listen(q)
+        # Alle Versionen stehen fest (aus uv.lock) → ohne erneutes Auflösen installieren, nur Dateien mit
+        # bekannter Prüfsumme
+        self._uv("pip", "install", "--python", py, "--no-deps", "--require-hashes", "-r", str(geprueft),
+                 anteil_von=0.06, anteil_bis=0.5 if pytorch else 0.9,
+                 erwartet_mb=self.erwartet_mb // 2 if pytorch else self.erwartet_mb)
+        if pytorch:
             torch = "cpu" if self.backend == "cpu" else TORCH_BACKEND
-            basis, extra = anforderungen_aufteilen(anforderungen_lesen(q["anforderungen"]))
-            ordner = pfade.basis() / "cache"
-            ordner.mkdir(parents=True, exist_ok=True)
-            (ordner / "basis.txt").write_text(basis, encoding="utf-8")
-            (ordner / "extra.txt").write_text(extra, encoding="utf-8")
-            # Alle Versionen stehen fest (aus uv.lock) → ohne erneutes Auflösen installieren
-            self._uv("pip", "install", "--python", py, "--no-deps", "--torch-backend", torch,
-                     "-r", str(ordner / "basis.txt"), "imageio-ffmpeg",
-                     anteil_von=0.06, anteil_bis=0.88, erwartet_mb=self.erwartet_mb)
-            if extra.strip():
-                self._uv("pip", "install", "--python", py, "--no-deps", "-r", str(ordner / "extra.txt"),
-                         anteil_von=0.88, anteil_bis=0.9)
-            self.phase = "taleward"
-            self._uv("pip", "install", "--python", py, "--no-deps", q["paket"], anteil_von=0.9, anteil_bis=0.95)
+            self._uv("pip", "install", "--python", py, "--no-deps", "--torch-backend", torch, "-r", str(pytorch),
+                     anteil_von=0.5, anteil_bis=0.9, erwartet_mb=self.erwartet_mb // 2)
+        self.phase = "taleward"
+        self._uv("pip", "install", "--python", py, "--no-deps", q["paket"], anteil_von=0.9, anteil_bis=0.95)
 
         self.phase = "ffmpeg"
         pruefung = _python_pruefen(py, "import app, sys; print('ok')")
@@ -329,6 +327,27 @@ class Installation:
         # Hinweis: Skripte im Motor (chronik.exe) kennen noch den alten Ordnernamen – gestartet wird daher immer
         # mit „python -m app.cli“, das funktioniert nach dem Umbenennen weiter.
 
+
+    def _listen(self, q: dict) -> tuple[Path, Path | None]:
+        """Paketlisten aus uv.lock der Fassung: (mit Prüfsummen, PyTorch-Familie ohne). Im Testmodus nur die
+        Grundpakete und ffmpeg, ohne PyTorch."""
+        ordner = pfade.basis() / "cache"
+        ordner.mkdir(parents=True, exist_ok=True)
+        basis, ki = pruefsummen(q, umgebung=self._umgebung(), ordner=ordner / "lock")
+        if self.testmodus:
+            geprueft, pytorch = pruefsummen_aufteilen(basis)[0], ""
+            ffmpeg = [b for n, b in eintraege(ki) if n == "imageio-ffmpeg"]
+            if not any(n == "imageio-ffmpeg" for n, _ in eintraege(geprueft)):
+                geprueft += (ffmpeg[0] + "\n") if ffmpeg else IMAGEIO_FFMPEG
+        else:
+            geprueft, pytorch = pruefsummen_aufteilen(ki, mit_cuda=self.backend != "cpu")
+            if not any(n == "imageio-ffmpeg" for n, _ in eintraege(geprueft)):
+                geprueft += IMAGEIO_FFMPEG
+        (ordner / "geprueft.txt").write_text(geprueft, encoding="utf-8")
+        if not pytorch.strip():
+            return ordner / "geprueft.txt", None
+        (ordner / "pytorch.txt").write_text(pytorch, encoding="utf-8")
+        return ordner / "geprueft.txt", ordner / "pytorch.txt"
 
     # ------------------------------------------------------------------ Schneller Weg bei neuer Serverfassung
     def _nur_taleward_noetig(self, q: dict) -> bool:
@@ -371,14 +390,14 @@ class Installation:
     def _nur_taleward(self, q: dict, zusatz: list[str] | None = None) -> None:
         self.phase = "taleward"
         py = str(pfade.motor_python())
+        geprueft = self._listen(q)[0] if zusatz else None  # vorher: braucht das Netz, der Worker läuft noch
         if callable(self.vor_tausch):
             self.vor_tausch()  # laufenden Worker anhalten (nur für wenige Sekunden)
         try:
-            if zusatz:
-                self.phase = "pakete"
-                torch = "cpu" if self.backend == "cpu" else TORCH_BACKEND
-                self._uv("pip", "install", "--python", py, "--no-deps", "--torch-backend", torch,
-                         "-r", str(pfade.basis() / "cache" / "pruefen.txt"), anteil_von=0.1, anteil_bis=0.6)
+            if geprueft:
+                self.phase = "pakete"  # nur kleine Pakete (nie PyTorch, siehe schwer) – mit Prüfsummen
+                self._uv("pip", "install", "--python", py, "--no-deps", "--require-hashes", "-r", str(geprueft),
+                         anteil_von=0.1, anteil_bis=0.6)
                 self.phase = "taleward"
             self._uv("pip", "install", "--python", py, "--no-deps", "--reinstall", q["paket"],
                      anteil_von=0.6 if zusatz else 0.1, anteil_bis=0.9)
@@ -596,6 +615,75 @@ def anforderungen_aufteilen(text: str) -> tuple[str, str]:
         name = zeile.split("==")[0].split(";")[0].strip().lower()
         (extra if name in OHNE_TORCH_VERZEICHNIS else basis).append(zeile)
     return "\n".join(basis) + "\n", "\n".join(extra) + ("\n" if extra else "")
+
+
+# Kommen in der Variante für die Grafikkarte vom PyTorch-Verzeichnis – dafür stehen keine Prüfsummen in uv.lock
+PYTORCH_VERZEICHNIS = ("torch", "torchaudio", "torchvision")
+# Nur für die Grafikkarte unter Linux nötig (bringt PyTorch von PyPI mit), bei „nur Prozessor“ weglassen
+NUR_CUDA = ("nvidia-", "triton")
+# Ältere Server-Fassungen hatten imageio-ffmpeg nicht in uv.lock (wurde ohne feste Fassung nachinstalliert)
+IMAGEIO_FFMPEG = """imageio-ffmpeg==0.6.0 \\
+    --hash=sha256:02fa47c83703c37df6bfe4896aab339013f62bf02c5ebf2dce6da56af04ffc0a \\
+    --hash=sha256:196faa79366b4a82f95c0f4053191d2013f4714a715780f0ad2a68ff37483cc2 \\
+    --hash=sha256:1d47bebd83d2c5fc770720d211855f208af8a596c82d17730aa51e815cdee6dc \\
+    --hash=sha256:9d2baaf867088508d4a3458e61eeb30e945c4ad8016025545f66c4b5aaef0a61 \\
+    --hash=sha256:b1ae3173414b5fc5f538a726c4e48ea97edc0d2cdc11f103afee655c463fa742 \\
+    --hash=sha256:c7e46fcec401dd990405049d2e2f475e2b397779df2519b544b8aab515195282 \\
+    --hash=sha256:e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755
+"""
+
+
+def pruefsummen(q: dict, umgebung: dict, ordner: Path) -> tuple[str, str]:
+    """pyproject.toml und uv.lock genau des freigegebenen Commits laden und daraus mit uv die Paketlisten mit
+    Prüfsummen erzeugen (ohne Netz, ohne neu aufzulösen): (Grundpakete, mit KI-Bibliotheken)."""
+    shutil.rmtree(ordner, ignore_errors=True)
+    ordner.mkdir(parents=True)
+    for name, schluessel in (("pyproject.toml", "projekt"), ("uv.lock", "lock")):
+        (ordner / name).write_text(anforderungen_lesen(q[schluessel]), encoding="utf-8")
+    listen = []
+    for name, zusatz in (("basis.txt", []), ("ki.txt", ["--extra", "ki"])):
+        befehl = [uv_programm(), "export", "--frozen", "--format", "requirements-txt", "--no-dev",
+                  "--no-emit-project", "--no-header", "--no-annotate", "-q", "-o", str(ordner / name), *zusatz]
+        try:
+            r = subprocess.run(befehl, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                               timeout=120, env=umgebung, cwd=ordner, **_ohne_fenster())
+        except (OSError, subprocess.SubprocessError) as e:
+            raise MotorFehler("installation", f"Paketliste mit Prüfsummen nicht erzeugbar: {e}") from None
+        if r.returncode != 0 or not (ordner / name).exists():
+            raise MotorFehler("installation",
+                              "Paketliste mit Prüfsummen nicht erzeugbar: " + (r.stderr or r.stdout)[-800:])
+        listen.append((ordner / name).read_text(encoding="utf-8"))
+    return listen[0], listen[1]
+
+
+def eintraege(text: str) -> list[tuple[str, str]]:
+    """requirements.txt mit Fortsetzungszeilen → [(Paketname, ganzer Eintrag)]."""
+    liste: list[tuple[str, str]] = []
+    for zeile in text.splitlines():
+        if not zeile.strip() or zeile.lstrip().startswith("#"):
+            continue
+        if zeile[:1].isspace() and liste:
+            name, block = liste[-1]
+            liste[-1] = (name, block + "\n" + zeile)
+        else:
+            name = re.split(r"[=<>!~ ;\[]", zeile.strip(), maxsplit=1)[0].lower().replace("_", "-")
+            liste.append((name, zeile))
+    return liste
+
+
+def pruefsummen_aufteilen(text: str, mit_cuda: bool = True) -> tuple[str, str]:
+    """→ (Einträge mit Prüfsummen, PyTorch-Familie als „name==version ; Bedingung“ ohne Prüfsummen)."""
+    geprueft, pytorch = [], []
+    for name, block in eintraege(text):
+        if name in PYTORCH_VERZEICHNIS:
+            pytorch.append(block.split("\\")[0].strip())
+        elif not mit_cuda and name.startswith(NUR_CUDA):
+            continue
+        else:
+            if "--hash=" not in block:
+                raise MotorFehler("installation", f"Für {name} fehlt die Prüfsumme in uv.lock.")
+            geprueft.append(block)
+    return "\n".join(geprueft) + "\n", "\n".join(pytorch) + ("\n" if pytorch else "")
 
 
 def ffmpeg_einrichten(python: Path) -> Path:
