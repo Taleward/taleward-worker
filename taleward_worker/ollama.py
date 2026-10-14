@@ -226,7 +226,10 @@ class OllamaDienst:
             return FREMDE_ADRESSE
         if not self.laeuft() and antwortet(self.eigene_adresse):
             # Läuft schon – von einer abgestürzten App übrig geblieben oder von einem zweiten Benutzer. Ein zweiter
-            # Start könnte den Port nicht belegen; die vorhandene Instanz tut es genauso.
+            # Start könnte den Port nicht belegen; die vorhandene Instanz tut es genauso – außer sie ist im Netz offen.
+            if nur_geschlossen and im_netz_offen(EIGENER_PORT):
+                self.fehler = f"Port {EIGENER_PORT} belegt von einem Ollama, das im Netz erreichbar ist"
+                return AUS
             self.fehler = ""
             return self.eigene_adresse
         if installiert() and self.starten():
@@ -242,8 +245,10 @@ class OllamaDienst:
                 self.fehler = "programm_fehlt"
                 return False
             modellordner().mkdir(parents=True, exist_ok=True)
-            env = {**os.environ, "OLLAMA_HOST": f"127.0.0.1:{EIGENER_PORT}", "OLLAMA_MODELS": str(modellordner()),
-                   "OLLAMA_KEEP_ALIVE": "2m", "OLLAMA_MAX_LOADED_MODELS": "1"}
+            # Nichts von außen übernehmen, was Ollama öffnet oder umstellt (OLLAMA_ORIGINS, OLLAMA_HOST …)
+            env = {k: v for k, v in os.environ.items() if not k.upper().startswith("OLLAMA_")}
+            env.update({"OLLAMA_HOST": f"127.0.0.1:{EIGENER_PORT}", "OLLAMA_MODELS": str(modellordner()),
+                        "OLLAMA_KEEP_ALIVE": "2m", "OLLAMA_MAX_LOADED_MODELS": "1"})
             protokoll_kuerzen(pfade.protokolle() / "ollama.log")
             log = open(pfade.protokolle() / "ollama.log", "ab")
             try:

@@ -6,7 +6,10 @@ Programms. Darum:
 - Navigation nur innerhalb von http://localhost:8000 – alles andere öffnet im normalen Browser, Rahmen von anderswo
   werden blockiert;
 - Mikrofon nur für diese Herkunft, alle anderen Berechtigungen abgelehnt;
-- keine Entwicklerwerkzeuge, kein Kontextmenü (nur mit TALEWARD_DEBUG).
+- keine Entwicklerwerkzeuge, kein Kontextmenü (nur mit TALEWARD_DEBUG);
+- neue Fenster (`window.open`, Links mit target) öffnet pywebview über `webbrowser.open` – das geht unter Windows an
+  `os.startfile` und damit auch an `file:`, UNC-Pfade oder fremde Schemata. `absichern()` lässt darum vor dem Start
+  des ersten Fensters nur noch http(s)-Adressen ohne Zugangsdaten durch (für beide Fenster des Programms).
 Die Regeln für WebView2 greifen nur unter Windows; anderswo bleibt es bei den Vorgaben von pywebview.
 """
 from __future__ import annotations
@@ -20,6 +23,7 @@ from urllib.parse import urlsplit
 log = logging.getLogger("taleward_worker")
 HOSTS = ("localhost", "127.0.0.1")
 PORT = 8000
+_ORIGINAL_OEFFNEN = webbrowser.open
 
 
 def eigene_seite(uri: str) -> bool:
@@ -31,13 +35,36 @@ def eigene_seite(uri: str) -> bool:
         return False
 
 
+def web_adresse(uri) -> bool:
+    """Darf diese Adresse an den Browser von Windows gehen? Nur http(s) mit Host, ohne Zugangsdaten, ohne
+    Steuerzeichen und Backslashes (Windows deutet sonst Pfade hinein)."""
+    if not isinstance(uri, str) or len(uri) > 4000 or "\\" in uri or any(ord(z) < 33 or z == "\x7f" for z in uri):
+        return False
+    try:
+        t = urlsplit(uri)
+        return t.scheme in ("http", "https") and bool(t.hostname) and t.username is None and t.password is None
+    except ValueError:
+        return False
+
+
+def nur_web_oeffnen(url, new=0, autoraise=True) -> bool:
+    if not web_adresse(url):
+        log.warning("Adresse nicht geöffnet (kein http/https): %.80r", url)
+        return False
+    return _ORIGINAL_OEFFNEN(url, new, autoraise)
+
+
+def absichern() -> None:
+    """Vor dem ersten Fenster aufrufen: Was immer pywebview oder das Programm an den Browser gibt, muss http(s) sein."""
+    webbrowser.open = nur_web_oeffnen
+    webbrowser.open_new = lambda url: nur_web_oeffnen(url, 1)
+    webbrowser.open_new_tab = lambda url: nur_web_oeffnen(url, 2)
+
+
 def extern_oeffnen(uri: str) -> None:
     """Links aus der App (Hilfe, Datenschutz anderer Anbieter …) im normalen Browser – nur http(s)."""
-    try:
-        if urlsplit(uri).scheme in ("http", "https"):
-            threading.Thread(target=webbrowser.open, args=(uri,), daemon=True).start()
-    except ValueError:
-        pass
+    if web_adresse(uri):
+        threading.Thread(target=nur_web_oeffnen, args=(uri,), daemon=True).start()
 
 
 class KeineBruecke:

@@ -192,7 +192,7 @@ begin
       entfernen braucht wieder Administratorrechte, darum nur, wenn es sie laut Merkdatei gibt }
     if FileExists(Daten + '\firewall.txt') then
       ShellExec('runas', 'powershell.exe',
-        '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Remove-NetFirewallRule -DisplayName ''Taleward'' -ErrorAction SilentlyContinue"',
+        '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Remove-NetFirewallRule -Name ''Taleward-Einzelplatz'' -ErrorAction SilentlyContinue; Get-NetFirewallRule -DisplayName ''Taleward'' -ErrorAction SilentlyContinue | Where-Object { $_.Description -eq ''Taleward: Handys im eigenen WLAN'' } | Remove-NetFirewallRule"',
         '', SW_HIDE, ewWaitUntilTerminated, Code);
   end;
   if CurUninstallStep = usPostUninstall then

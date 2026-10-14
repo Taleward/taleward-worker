@@ -712,6 +712,7 @@ class WorkerApp:
             webview2_fehlt_melden()
             return
         self.hardware = hardware.bericht()
+        fenster.absichern()  # vor dem ersten Fenster: an den Browser nur noch http(s)
         self._tray_starten()
         versteckt = self.hintergrund and self.e.gekoppelt
         breite, hoehe, mindestens = fenstergroesse(bildschirm_hoehe())

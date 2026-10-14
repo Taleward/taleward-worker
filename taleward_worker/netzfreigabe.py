@@ -1,12 +1,18 @@
 """Windows-Firewall für „Alles auf diesem PC“: Handys im WLAN sollen Taleward erreichen – und sonst niemand.
 
-Eine Regel „Taleward“: eingehend, nur das Python des KI-Pakets (das Programm, das tatsächlich lauscht), nur TCP 8000,
-nur im Netzprofil „Privat“, nur aus dem lokalen Subnetz. Anlegen braucht einmal Administratorrechte (Windows fragt);
-Prüfen geht ohne. Ist das WLAN als „Öffentlich“ eingestuft, stellt das Programm nichts still um, sondern sagt, wo man
-es ändert. Beim Deinstallieren entfernt der Installer die Regel (Merkdatei `firewall.txt`).
+Eine Regel (Name `Taleward-Einzelplatz`, angezeigt als „Taleward“): eingehend, nur das Python des KI-Pakets (das
+Programm, das tatsächlich lauscht), nur TCP 8000, nur im Netzprofil „Privat“, nur aus dem lokalen Subnetz. Anlegen
+braucht einmal Administratorrechte (Windows fragt); Prüfen geht ohne. Andere eingehende Regeln für genau dieses Python
+(z. B. die, die Windows bei seiner eigenen Rückfrage anlegt, auch für „Öffentlich“) ersetzt das Anlegen; solange es sie
+gibt, gilt die Freigabe als nicht in Ordnung. Ist das WLAN als „Öffentlich“ eingestuft, stellt das Programm nichts still
+um, sondern sagt, wo man es ändert. Beim Deinstallieren entfernt der Installer die Regel (Merkdatei `firewall.txt`, wird
+vor dem Anlegen geschrieben).
 
-Alle PowerShell-Befehle gehen als -EncodedCommand (UTF-16, Base64) – Pfade mit Leerzeichen, Umlauten oder Anführungs-
-zeichen können so nichts umdeuten.
+Grenze: Die Regel gilt für das Python im Benutzerordner. Jedes Programm, das dieser Windows-Nutzer mit genau diesem
+Python startet, dürfte auf TCP 8000 aus dem Heimnetz lauschen – solange Taleward läuft, ist der Anschluss belegt.
+
+Alle PowerShell-Befehle gehen als -EncodedCommand (UTF-16, Base64); Pfade und Namen stehen darin nochmals als Base64
+(UTF-8) – Leerzeichen, Umlaute oder Anführungszeichen jeder Art können so nichts umdeuten.
 """
 from __future__ import annotations
 
@@ -20,14 +26,19 @@ from pathlib import Path
 from taleward_worker import motor, pfade
 
 log = logging.getLogger("taleward_worker")
-REGEL = "Taleward"
+REGEL = "Taleward"                    # Anzeigename
+REGEL_NAME = "Taleward-Einzelplatz"   # eindeutiger Name – entfernt wird nur diese Regel
+BESCHREIBUNG = "Taleward: Handys im eigenen WLAN"
 PORT = 8000
 WINDOWS = sys.platform == "win32"
 
 
 def _ps(text: str) -> str:
-    """PowerShell-Zeichenkette in einfachen Anführungszeichen (dort zählt nur ' – verdoppelt)."""
-    return "'" + text.replace("'", "''") + "'"
+    """Zeichenkette für PowerShell, ohne dass irgendein Zeichen darin etwas bedeutet: Base64 (UTF-8), erst in
+    PowerShell zurückverwandelt. (PowerShell wertet auch typografische Anführungszeichen ‘ ’ ‚ ‛ als Ende einer
+    Zeichenkette – ein bloßes Verdoppeln von ' reicht nicht.)"""
+    roh = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    return f"([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{roh}')))"
 
 
 def _kodiert(skript: str) -> list[str]:
@@ -58,18 +69,23 @@ def lauschendes_programm() -> Path | None:
     return Path(pfad) if pfad else None
 
 
-def regel_lesen() -> dict | None:
+def regel_lesen(programm: Path | None = None) -> dict | None:
     if not WINDOWS:
         return None
+    fremd = "0"
+    if programm is not None:  # andere eingehende, eingeschaltete Regeln für genau dieses Programm
+        fremd = (f"@(Get-NetFirewallApplicationFilter -Program {_ps(str(programm))} -ErrorAction SilentlyContinue | "
+                 f"Get-NetFirewallRule | Where-Object {{ $_.Name -ne {_ps(REGEL_NAME)} -and $_.Direction -eq 'Inbound' "
+                 f"-and [string]$_.Enabled -eq 'True' }}).Count")
     skript = f"""
-$r = Get-NetFirewallRule -DisplayName {_ps(REGEL)} -ErrorAction SilentlyContinue | Select-Object -First 1
+$r = Get-NetFirewallRule -Name {_ps(REGEL_NAME)} -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($r) {{
   $a = $r | Get-NetFirewallApplicationFilter
   $p = $r | Get-NetFirewallPortFilter
   $d = $r | Get-NetFirewallAddressFilter
   [pscustomobject]@{{ Program = [string]$a.Program; Port = [string]$p.LocalPort; Protocol = [string]$p.Protocol;
     Profile = [string]$r.Profile; Enabled = [string]$r.Enabled; Action = [string]$r.Action;
-    Remote = (@($d.RemoteAddress) -join ',') }} | ConvertTo-Json -Compress
+    Remote = (@($d.RemoteAddress) -join ','); Fremd = [int]({fremd}) }} | ConvertTo-Json -Compress
 }}"""
     try:
         text = _powershell(skript)
@@ -85,14 +101,15 @@ def regel_passt(regel: dict | None, programm: Path | None) -> bool:
     return (str(regel.get("Program", "")).lower() == str(programm).lower() and regel.get("Port") == str(PORT)
             and regel.get("Protocol", "").upper() == "TCP" and regel.get("Enabled") == "True"
             and regel.get("Action") == "Allow" and regel.get("Profile") == "Private"
-            and regel.get("Remote") == "LocalSubnet")
+            and regel.get("Remote") == "LocalSubnet" and not regel.get("Fremd"))
 
 
 def stand() -> dict:
     """Für die Oberfläche: Ist die Freigabe da, wie ist das Netz eingestuft? Unter Linux nichts zu tun."""
     if not WINDOWS:
         return {"noetig": False}
-    return {"noetig": True, "regel": regel_passt(regel_lesen(), lauschendes_programm()), "profile": netzprofile()}
+    programm = lauschendes_programm()
+    return {"noetig": True, "regel": regel_passt(regel_lesen(programm), programm), "profile": netzprofile()}
 
 
 def netzprofile() -> list[str]:
@@ -107,15 +124,20 @@ def netzprofile() -> list[str]:
 
 
 def anlegen_skript(programm: Path) -> str:
-    """Alte Regel ersetzen; Sperr-Regeln, die Windows beim Abbrechen seiner eigenen Rückfrage für genau dieses
-    Python angelegt hat, entfernen (sie gingen der Erlaubnis vor). Andere Regeln bleiben unberührt."""
+    """Eigene Regel ersetzen; alle anderen eingehenden Regeln für genau dieses Python entfernen – Sperr-Regeln, die
+    Windows beim Abbrechen seiner eigenen Rückfrage anlegt (gingen der Erlaubnis vor), und Erlaubnis-Regeln aus dieser
+    Rückfrage (oft auch für „Öffentlich“). Regeln für andere Programme bleiben unberührt; ebenso fremde Regeln, die nur
+    zufällig „Taleward“ heißen. Ältere Fassungen (bis 0.3.2) legten die Regel nur mit Anzeigenamen an."""
     p = _ps(str(programm))
     return f"""$ErrorActionPreference = 'Stop'
-Remove-NetFirewallRule -DisplayName {_ps(REGEL)} -ErrorAction SilentlyContinue
+Remove-NetFirewallRule -Name {_ps(REGEL_NAME)} -ErrorAction SilentlyContinue
+Get-NetFirewallRule -DisplayName {_ps(REGEL)} -ErrorAction SilentlyContinue |
+  Where-Object {{ $_.Description -eq {_ps(BESCHREIBUNG)} }} | Remove-NetFirewallRule
 Get-NetFirewallApplicationFilter -Program {p} -ErrorAction SilentlyContinue | Get-NetFirewallRule |
-  Where-Object {{ $_.Action -eq 'Block' -and $_.Direction -eq 'Inbound' }} | Remove-NetFirewallRule
-New-NetFirewallRule -DisplayName {_ps(REGEL)} -Description 'Taleward: Handys im eigenen WLAN' -Direction Inbound `
-  -Action Allow -Program {p} -Protocol TCP -LocalPort {PORT} -Profile Private -RemoteAddress LocalSubnet | Out-Null
+  Where-Object {{ $_.Direction -eq 'Inbound' }} | Remove-NetFirewallRule
+New-NetFirewallRule -Name {_ps(REGEL_NAME)} -DisplayName {_ps(REGEL)} -Description {_ps(BESCHREIBUNG)} `
+  -Direction Inbound -Action Allow -Program {p} -Protocol TCP -LocalPort {PORT} -Profile Private `
+  -RemoteAddress LocalSubnet | Out-Null
 """
 
 
@@ -126,13 +148,12 @@ def anlegen() -> bool:
     programm = lauschendes_programm()
     if programm is None:
         return False
+    try:  # vorher: auch wenn das Skript nach dem Anlegen scheitert, findet der Deinstaller die Regel
+        (pfade.basis() / "firewall.txt").write_text(REGEL_NAME, encoding="utf-8")
+    except OSError:
+        pass
     ok = _als_admin("powershell.exe", " ".join(_kodiert(anlegen_skript(programm))))
-    if ok:
-        try:
-            (pfade.basis() / "firewall.txt").write_text(REGEL, encoding="utf-8")  # für den Deinstaller
-        except OSError:
-            pass
-    return ok and regel_passt(regel_lesen(), programm)
+    return ok and regel_passt(regel_lesen(programm), programm)
 
 
 def _als_admin(programm: str, parameter: str, warten_ms: int = 120_000) -> bool:
