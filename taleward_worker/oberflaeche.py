@@ -77,7 +77,7 @@ class Api:
         return {"ok": self._app.app_fenster_oeffnen()}
 
     def im_browser_oeffnen(self) -> None:
-        if self._app.server.bereit.is_set():
+        if self._app.server.app_bereit.is_set():
             webbrowser.open(einzelplatz.APP_ADRESSE)
 
     def netz_freigeben(self) -> dict:
@@ -269,8 +269,7 @@ class WorkerApp:
     def __init__(self, hintergrund: bool = False):
         self.e = Einstellungen.laden()
         self.dienst = Dienst(self.e)
-        self.server = einzelplatz.ServerDienst()
-        self.server.bei_bereit = self._worker_koppeln
+        self._server: einzelplatz.ServerDienst | None = None  # erst bei „Alles auf diesem PC“
         self.app_fenster = None
         self.netz: dict | None = None  # Firewall und Netzprofil (Einzelplatz, Windows) – langsam, darum zwischengespeichert
         self.installation: motor.Installation | None = None
@@ -297,6 +296,14 @@ class WorkerApp:
                 self.dienst._setzen("abgelehnt")
 
     # -- Alles auf diesem PC
+    @property
+    def server(self) -> einzelplatz.ServerDienst:
+        """Der Server dieses PCs – nur im Betrieb „Alles auf diesem PC“ überhaupt angelegt."""
+        if self._server is None:
+            self._server = einzelplatz.ServerDienst()
+            self._server.bei_bereit = self._worker_koppeln
+        return self._server
+
     def taleward_starten(self) -> None:
         """Server aus dem KI-Paket starten; sobald er antwortet, koppelt sich der Worker (_worker_koppeln)."""
         if not self.e.einzelplatz or not (motor.installiert() or os.environ.get("TALEWARD_MOTOR")):
@@ -347,8 +354,8 @@ class WorkerApp:
         self.netz_pruefen()
 
     def app_fenster_oeffnen(self) -> bool:
-        if not self.server.bereit.is_set():
-            return False
+        if not self.server.app_bereit.is_set():
+            return False  # die App lädt der Server beim ersten Start erst noch
         if self.app_fenster is not None:
             try:
                 self.app_fenster.show()
@@ -550,9 +557,9 @@ class WorkerApp:
                     self.e.speichern()
                     en = self.e.sprache.startswith("en")
                     try:
-                        self.tray.notify("The worker keeps running in the background. Right-click the icon to quit."
-                                         if en else "Der Worker läuft im Hintergrund weiter. Beenden über "
-                                         "Rechtsklick auf das Symbol.", "Taleward Worker")
+                        self.tray.notify("Taleward keeps running in the background. Right-click the icon to quit."
+                                         if en else "Taleward läuft im Hintergrund weiter. Beenden über "
+                                         "Rechtsklick auf das Symbol.", "Taleward")
                     except Exception:  # noqa: BLE001 – Hinweis ist Beiwerk
                         pass
             else:
@@ -585,7 +592,8 @@ class WorkerApp:
                 inst.abbrechen()  # sonst schreibt uv nach dem Ende der App minutenlang weiter in motor-neu
         self.dienst.stoppen()
         self.dienst.ollama.stoppen()
-        self.server.stoppen()
+        if self._server is not None:
+            self._server.stoppen()
         if self.tray is not None:
             try:
                 self.tray.stop()
@@ -639,7 +647,7 @@ class WorkerApp:
                                                                                    daemon=True).start()),
         )
         try:
-            icon = pystray.Icon("taleward-worker", symbol("gestoppt"), "Taleward Worker", menue)
+            icon = pystray.Icon("taleward-worker", symbol("gestoppt"), "Taleward", menue)
             icon.run_detached()
         except Exception:  # noqa: BLE001 – z. B. Wayland ohne Infobereich
             return
@@ -680,7 +688,7 @@ class WorkerApp:
         versteckt = self.hintergrund and self.e.gekoppelt
         breite, hoehe, mindestens = fenstergroesse(bildschirm_hoehe())
         self.fenster = webview.create_window(
-            "Taleward Worker", str(pfade.ressourcen() / "ui" / "index.html"), js_api=Api(self),
+            "Taleward", str(pfade.ressourcen() / "ui" / "index.html"), js_api=Api(self),
             width=breite, height=hoehe, min_size=mindestens, background_color="#F2E8D5",
             hidden=versteckt and self.tray is not None, minimized=versteckt and self.tray is None)
         self.fenster.events.closing += self._beim_schliessen
@@ -694,7 +702,8 @@ class WorkerApp:
                       storage_path=str(pfade.fenster_speicher()))
         self._beendet.set()
         self.dienst.stoppen()
-        self.server.stoppen()
+        if self._server is not None:
+            self._server.stoppen()
         if self.tray is not None:
             try:
                 self.tray.stop()
@@ -718,8 +727,8 @@ def tray_titel(d: dict, sprache: str) -> str:
         "abgestuerzt": ("Startet neu …", "Restarting …"),
         "gestoppt": ("Angehalten", "Stopped"),
     }
-    de_text, en_text = texte.get(art, ("Taleward Worker", "Taleward Worker"))
-    return "Taleward Worker – " + (en_text if en else de_text)
+    de_text, en_text = texte.get(art, ("Bereit", "Ready"))
+    return "Taleward – " + (en_text if en else de_text)
 
 
 # ---------------------------------------------------------------------- Fenster und Browser-Kern
@@ -768,9 +777,9 @@ def webview2_fehlt_melden() -> None:
         import ctypes
 
         antwort = ctypes.windll.user32.MessageBoxW(  # type: ignore[attr-defined]
-            None, "Taleward Worker braucht die Microsoft-Komponente „WebView2“, die auf diesem PC fehlt.\n\n"
-            "Jetzt die Download-Seite öffnen? (Installieren, dann Taleward Worker erneut starten.)",
-            "Taleward Worker", 0x14)  # MB_YESNO | MB_ICONERROR
+            None, "Taleward braucht die Microsoft-Komponente „WebView2“, die auf diesem PC fehlt.\n\n"
+            "Jetzt die Download-Seite öffnen? (Installieren, dann Taleward erneut starten.)",
+            "Taleward", 0x14)  # MB_YESNO | MB_ICONERROR
         if antwort == 6:  # IDYES
             webbrowser.open(WEBVIEW2_LINK)
     except Exception:  # noqa: BLE001

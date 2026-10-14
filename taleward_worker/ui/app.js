@@ -97,8 +97,10 @@
     $$("[data-seite]").forEach((el) => { el.hidden = Number(el.dataset.seite) !== nr; });
     if (nr === 5) kontoZeigen();
     if (nr === 4) {
-      $("#fertig-text").textContent = einzelplatz() ? t("fertig_text_einzelplatz", { name: S.einstellungen.anmeldename || "–" }) : t("fertig_text");
+      $("#fertig-text").textContent = einzelplatz() ? t("fertig_text_einzelplatz", { name: S.einstellungen.anmeldename || "–" })
+        + (S.taleward && !S.taleward.app ? " " + t("tw_app_laedt") : "") : t("fertig_text");
       $("#los").textContent = t(einzelplatz() ? "Taleward öffnen" : "Worker starten");
+      $("#los").disabled = einzelplatz() && !(S.taleward && S.taleward.app);
     }
     if (nr === 1) {
       const name = $("#name");
@@ -233,10 +235,12 @@
     const tw = S.taleward || {}, z = tw.zustand || {}, art = z.art || "gestoppt";
     $("#taleward-titel").textContent = t("tw_" + art);
     $("#taleward-text").textContent = art === "fehler" ? t("tw_f_" + (z.code || "startet_nicht"))
+      : art === "laeuft" && tw.appFehlt ? t("tw_app_fehlt")
+      : art === "laeuft" && !tw.app ? t("tw_app_laedt")
       : art === "laeuft" ? t("tw_laeuft_text", { name: S.einstellungen.anmeldename || "–" })
       : art === "abgestuerzt" ? t("tw_abgestuerzt_text", { wann: wann(z.neuerVersuch) }) : t("tw_" + art + "_text");
-    $("#taleward-oeffnen").disabled = !tw.bereit;
-    $("#taleward-browser").disabled = !tw.bereit;
+    $("#taleward-oeffnen").disabled = !tw.app;
+    $("#taleward-browser").disabled = !tw.app;
     $("#taleward-neustart").hidden = art !== "fehler";
     const netz = tw.netz || {};
     const oeffentlich = (netz.profile || []).includes("Public") && !(netz.profile || []).includes("Private");
@@ -362,7 +366,7 @@
       const wert = n === "autostart" ? S.autostart : S.einstellungen[n];
       if (el.type === "checkbox") el.checked = !!wert; else el.value = wert || (n === "modell" ? "auto" : "");
     });
-    $("#fuss-version").textContent = "Taleward Worker " + S.version;
+    $("#fuss-version").textContent = "Taleward " + S.version;
     $("#neu-koppeln").hidden = einzelplatz();
     const k = S.hardware && S.hardware.grafikkarte;
     $("#zeile-prozessor").hidden = !(k && S.hardware.grafikkarteNutzbar) || S.einstellungen.testmodus;

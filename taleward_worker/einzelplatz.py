@@ -26,7 +26,8 @@ PORT = 8000
 ADRESSE = f"http://127.0.0.1:{PORT}"
 APP_ADRESSE = f"http://localhost:{PORT}/app/"
 WARTEZEITEN = [3, 10, 30, 120]
-START_FRIST_S = 180          # so lange darf der erste Start dauern (Datenbank einrichten, Web-App laden)
+START_FRIST_S = 180          # so lange darf der erste Start dauern (Datenbank einrichten)
+APP_FRIST_S = 900            # so lange darf das erste Laden der App dauern, bevor die Oberfläche einen Hinweis zeigt
 STOPP_FRIST_S = 20
 MIN_PASSWORT = 8
 
@@ -47,7 +48,9 @@ class ServerDienst:
         self.zustand: dict = {"art": "gestoppt"}
         self.zeilen: deque[str] = deque(maxlen=400)
         self.bereit = threading.Event()
-        threading.Thread(target=self._wachen, daemon=True, name="server-waechter").start()
+        self.app_bereit = threading.Event()  # die Web-App liegt vor (lädt der Server beim ersten Start von GitHub)
+        self.app_fehlt = False
+        self._waechter: threading.Thread | None = None
 
     # ------------------------------------------------------------------ Steuerung
     def starten(self, startschluessel: bool = False) -> None:
@@ -57,6 +60,9 @@ class ServerDienst:
             self._versuche = 0
             self._neustart_um = None
             self._mit_schluessel = startschluessel
+            if self._waechter is None:
+                self._waechter = threading.Thread(target=self._wachen, daemon=True, name="server-waechter")
+                self._waechter.start()
             if not self.laeuft():
                 self._prozess_starten()
 
@@ -66,6 +72,7 @@ class ServerDienst:
             self._neustart_um = None
             p = self._prozess
         self.bereit.clear()
+        self.app_bereit.clear()
         if p and p.poll() is None:
             try:
                 pfade.server_stopp().write_text("stopp", encoding="utf-8")
@@ -159,12 +166,33 @@ class ServerDienst:
                         self._schreiben("Taleward läuft")
                         if callable(self.bei_bereit):
                             threading.Thread(target=self.bei_bereit, daemon=True, name="worker-koppeln").start()
+                        threading.Thread(target=self._app_pruefen, args=(p,), daemon=True, name="app-da").start()
                         return
                 except httpx.HTTPError:
                     pass
                 time.sleep(0.5)
         if p.poll() is None and p is self._prozess:
             self._setzen("fehler", code="startet_nicht")
+
+    def _app_pruefen(self, p: subprocess.Popen) -> None:
+        """Liegt die Web-App vor? Beim ersten Start holt der Server sie erst – bis dahin bleibt „Taleward öffnen“ aus.
+        Nach APP_FRIST_S ein Hinweis (Internet prüfen), weiter nachsehen, nur seltener."""
+        beginn = time.monotonic()
+        self.app_fehlt = False
+        with httpx.Client(timeout=5, headers={"User-Agent": f"TalewardWorker/{VERSION}"}) as k:
+            while p.poll() is None and p is self._prozess:
+                try:
+                    if k.get(f"{ADRESSE}/app/").status_code == 200:
+                        self.app_fehlt = False
+                        self.app_bereit.set()
+                        return
+                except httpx.HTTPError:
+                    pass
+                lange = time.monotonic() - beginn > APP_FRIST_S
+                if lange and not self.app_fehlt:
+                    self.app_fehlt = True
+                    self._schreiben("Die App liegt noch nicht vor – Internetverbindung prüfen")
+                time.sleep(30 if lange else 2)
 
     def _lesen(self, p: subprocess.Popen) -> None:
         belegt = False
@@ -177,6 +205,7 @@ class ServerDienst:
                 belegt = True
         code = p.wait()
         self.bereit.clear()
+        self.app_bereit.clear()
         if self._schluessel:
             pfade.startschluessel().unlink(missing_ok=True)
         with self._sperre:
@@ -260,4 +289,5 @@ class ServerDienst:
 
     def fuer_oberflaeche(self) -> dict:
         return {"zustand": self.zustand, "laeuft": self.laeuft(), "bereit": self.bereit.is_set(),
+                "app": self.app_bereit.is_set(), "appFehlt": self.app_fehlt,
                 "kontoMoeglich": bool(self._schluessel) and self.bereit.is_set()}

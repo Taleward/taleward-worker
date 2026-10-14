@@ -39,7 +39,8 @@ class H(BaseHTTPRequestHandler):
         self.send_response(code); self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(roh))); self.end_headers(); self.wfile.write(roh)
     def do_GET(self):
-        self._json(200 if self.path == "/api/v1/health" else 404, {"status": "ok"})
+        ok = self.path == "/api/v1/health" or (self.path == "/app/" and os.environ.get("ERSATZ_APP"))
+        self._json(200 if ok else 404, {"status": "ok"})
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         if self.path != "/verwaltung/einzelplatz/konto" or not schluessel or body.get("schluessel") != schluessel:
@@ -259,3 +260,27 @@ def test_oberflaeche_wahl_und_konto(monkeypatch):
     api.entkoppeln()
     assert app.e.token == "wk.abc.def"
     assert api.betrieb_waehlen("verbunden") == {"ok": False}
+
+
+def test_taleward_oeffnen_erst_wenn_die_app_da_ist(ersatz, monkeypatch):
+    d = ersatz()
+    d.starten()
+    assert d.warten_bis_bereit(15)
+    time.sleep(0.5)
+    assert not d.app_bereit.is_set() and not d.fuer_oberflaeche()["app"]  # Server läuft, App noch nicht geladen
+    d.stoppen()
+    monkeypatch.setenv("ERSATZ_APP", "1")
+    d.starten()
+    assert d.warten_bis_bereit(15) and d.app_bereit.wait(5)
+    assert d.fuer_oberflaeche()["app"]
+    d.stoppen()
+    assert not d.app_bereit.is_set()
+
+
+def test_ohne_alles_auf_diesem_pc_kein_server_dienst():
+    from taleward_worker.oberflaeche import Api, WorkerApp
+
+    app = WorkerApp()
+    Api(app).zustand()
+    assert app._server is None  # im Worker-Betrieb wird nichts davon angelegt
+    app.beenden()
