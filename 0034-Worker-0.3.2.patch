@@ -1,0 +1,277 @@
+From 13573a067aa469c8888edeb814592b96a888348d Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 20:40:37 +0200
+Subject: [PATCH 34/34] Worker 0.3.2
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+„Alles auf diesem PC“ aktualisiert sich selbst auf die neueste
+freigegebene Fassung: nur wenn gerade nichts läuft, mit Sicherung vorher,
+Prüfung danach und Rückweg auf die alte Fassung samt Daten. Anzeige und
+„Jetzt aktualisieren“ in der Taleward-Karte.
+---
+ pyproject.toml                 |  2 +-
+ taleward_worker/__init__.py    |  2 +-
+ taleward_worker/oberflaeche.py | 50 +++++++++++++++++++++++++++-------
+ taleward_worker/ui/app.js      | 25 +++++++++++++++--
+ taleward_worker/ui/index.html  |  2 ++
+ taleward_worker/ui/texte.js    | 28 +++++++++++++++++++
+ uv.lock                        |  2 +-
+ 7 files changed, 95 insertions(+), 16 deletions(-)
+
+diff --git a/pyproject.toml b/pyproject.toml
+index 28cd9ed..243f102 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-worker"
+-version = "0.3.1"
++version = "0.3.2"
+ description = "Taleward Worker – verarbeitet Aufnahmen für einen Taleward-Server auf dem eigenen PC mit Grafikkarte"
+ license = "AGPL-3.0-only"
+diff --git a/taleward_worker/__init__.py b/taleward_worker/__init__.py
+index 4548c41..9692447 100644
+--- a/taleward_worker/__init__.py
++++ b/taleward_worker/__init__.py
+@@ -4,5 +4,5 @@ Die App selbst ist klein. Das KI-Paket (Taleward-Server mit WhisperX, einige GB)
+ passender Fassung zum verbundenen Server und startet es als Unterprozess („chronik worker --app“).
+ """
+-VERSION = "0.3.1"
++VERSION = "0.3.2"
+ REPO = "Taleward/taleward-server"        # Server-Code = KI-Paket (engine-requirements.txt, Tags v…)
+ APP_REPO = "Taleward/taleward-worker"   # diese App
+diff --git a/taleward_worker/oberflaeche.py b/taleward_worker/oberflaeche.py
+index 6d2dba7..bf48167 100644
+--- a/taleward_worker/oberflaeche.py
++++ b/taleward_worker/oberflaeche.py
+@@ -12,5 +12,5 @@ import webbrowser
+ 
+ from taleward_worker import (VERSION, autostart, einzelplatz, fenster, hardware, motor, netzfreigabe, ollama, pfade,
+-                             selbstupdate, server)
++                             selbstupdate, server, serverupdate)
+ from taleward_worker.dienst import Dienst
+ from taleward_worker.einstellungen import Einstellungen
+@@ -39,5 +39,6 @@ class Api:
+             "entwicklung": bool(os.environ.get("TALEWARD_MOTOR")),
+             "ollama": a.ollama_stand(),
+-            "taleward": {**a.server.fuer_oberflaeche(), "netz": a.netz} if a.e.einzelplatz else None,
++            "taleward": {**a.server.fuer_oberflaeche(), "netz": a.netz, "update": a.ep_update.fuer_oberflaeche()}
++            if a.e.einzelplatz else None,
+         }
+ 
+@@ -92,5 +93,11 @@ class Api:
+ 
+     def taleward_neu_starten(self) -> None:
+-        threading.Thread(target=self._app.server_neu_starten, daemon=True).start()
++        if not self._app.ep_update.laeuft():
++            threading.Thread(target=self._app.server_neu_starten, daemon=True).start()
++
++    def taleward_aktualisieren(self) -> dict:
++        if not self._app.e.einzelplatz:
++            return {"ok": False, "grund": "aktuell"}
++        return self._app.ep_update.jetzt()
+ 
+     def hardware_pruefen(self) -> dict:
+@@ -271,4 +278,5 @@ class WorkerApp:
+         self.dienst = Dienst(self.e)
+         self._server: einzelplatz.ServerDienst | None = None  # erst bei „Alles auf diesem PC“
++        self._update: serverupdate.ServerUpdate | None = None
+         self.app_fenster = None
+         self.netz: dict | None = None  # Firewall und Netzprofil (Einzelplatz, Windows) – langsam, darum zwischengespeichert
+@@ -305,4 +313,11 @@ class WorkerApp:
+         return self._server
+ 
++    @property
++    def ep_update(self) -> serverupdate.ServerUpdate:
++        """Updates von Taleward auf diesem PC – wie der Server nur bei „Alles auf diesem PC“ angelegt."""
++        if self._update is None:
++            self._update = serverupdate.ServerUpdate(self)
++        return self._update
++
+     def taleward_starten(self) -> None:
+         """Server aus dem KI-Paket starten; sobald er antwortet, koppelt sich der Worker (_worker_koppeln)."""
+@@ -416,4 +431,6 @@ class WorkerApp:
+         if self.installation and self.installation.phase not in ("fertig", "fehler", "abgebrochen"):
+             return
++        if self._update is not None and self._update.laeuft():
++            return
+         self.e.testmodus = testmodus
+         self.e.speichern()
+@@ -446,8 +463,13 @@ class WorkerApp:
+ 
+         backend = "cpu" if self.e.geraet == "cpu" else "cuda"
+-        # Alles auf diesem PC: kein Server nennt die Fassung – die neueste freigegebene von GitHub
+-        fassung = "" if self.e.einzelplatz else (self.server_version or "")
++        # Alles auf diesem PC: kein Server nennt die Fassung. Erstinstallation → die neueste freigegebene von GitHub;
++        # Neu installieren → dieselbe Fassung wie bisher (eine neue kommt nur über das Update mit Sicherung)
++        if self.e.einzelplatz:
++            fassung = str((motor.installiert() or {}).get("fassung") or "") if not testmodus else ""
++        else:
++            fassung = self.server_version or ""
+         self.installation = motor.Installation(fassung, testmodus=testmodus, backend=backend,
+-                                               vor_tausch=vor, nach_tausch=nach, neueste=self.e.einzelplatz)
++                                               vor_tausch=vor, nach_tausch=nach,
++                                               neueste=self.e.einzelplatz and not fassung)
+         self.installation.starten()
+ 
+@@ -455,5 +477,7 @@ class WorkerApp:
+         """Serverfassung abfragen; passt das KI-Paket nicht mehr, im Hintergrund nachziehen (nur ohne Auftrag)."""
+         if self.e.einzelplatz:
+-            # Alles auf diesem PC: Taleward starten, der Worker folgt (Updates kommen in einem eigenen Schritt)
++            # Alles auf diesem PC: Taleward starten, der Worker folgt; Updates mit Sicherung und Rückweg
++            if self.ep_update.laeuft():
++                return  # das Update hält Taleward bewusst an
+             laeuft_installation = self.installation and self.installation.phase not in ("fertig", "fehler",
+                                                                                          "abgebrochen")
+@@ -461,4 +485,6 @@ class WorkerApp:
+                     "gestoppt",) and (motor.installiert() or os.environ.get("TALEWARD_MOTOR")):
+                 self.taleward_starten()
++            if not laeuft_installation:
++                self.ep_update.wenn_faellig()
+             return
+         self.fassung_abfragen()
+@@ -534,5 +560,6 @@ class WorkerApp:
+             return
+         beschaeftigt = self.dienst.zustand.get("art") == "arbeitet" or (
+-            self.installation and self.installation.phase not in ("fertig", "fehler", "abgebrochen"))
++            self.installation and self.installation.phase not in ("fertig", "fehler", "abgebrochen")) or (
++            self._update is not None and self._update.laeuft())
+         if not beschaeftigt:
+             self.selbst_aktualisieren()
+@@ -620,5 +647,6 @@ class WorkerApp:
+             art = self.dienst.zustand.get("art", "gestoppt")
+             self.tray.icon = symbol(art)
+-            self.tray.title = tray_titel(self.dienst.fuer_oberflaeche(), self.e.sprache)
++            self.tray.title = tray_titel(self.dienst.fuer_oberflaeche(), self.e.sprache,
++                                         self._update is not None and self._update.laeuft())
+             self.tray.update_menu()
+         except Exception:  # noqa: BLE001 – Infobereich ist Beiwerk
+@@ -712,6 +740,8 @@ class WorkerApp:
+ 
+ 
+-def tray_titel(d: dict, sprache: str) -> str:
++def tray_titel(d: dict, sprache: str, update: bool = False) -> str:
+     en = sprache.startswith("en")
++    if update:
++        return "Taleward – " + ("Updating …" if en else "Wird aktualisiert …")
+     z = d["zustand"]
+     art = z.get("art")
+diff --git a/taleward_worker/ui/app.js b/taleward_worker/ui/app.js
+index 4fd242f..90e3888 100644
+--- a/taleward_worker/ui/app.js
++++ b/taleward_worker/ui/app.js
+@@ -234,6 +234,10 @@
+     if (!einzelplatz()) return;
+     const tw = S.taleward || {}, z = tw.zustand || {}, art = z.art || "gestoppt";
+-    $("#taleward-titel").textContent = t("tw_" + art);
+-    $("#taleward-text").textContent = art === "fehler" ? t("tw_f_" + (z.code || "startet_nicht"))
++    const upd = tw.update || {}, imUpdate = ["vorbereiten", "sichern", "tauschen", "starten", "pruefen", "zurueck"].includes(upd.phase);
++    const werte = { neu: upd.neu || upd.angebot || "", alt: upd.alt || "",
++                    prozent: upd.anteil != null ? Math.round(upd.anteil * 100) + " %" : "…" };
++    $("#taleward-titel").textContent = imUpdate && upd.phase !== "vorbereiten" ? t("tw_upd") : t("tw_" + art);
++    $("#taleward-text").textContent = imUpdate && upd.phase !== "vorbereiten" ? t("tw_upd_" + upd.phase, werte)
++      : art === "fehler" ? t("tw_f_" + (z.code || "startet_nicht"))
+       : art === "laeuft" && tw.appFehlt ? t("tw_app_fehlt")
+       : art === "laeuft" && !tw.app ? t("tw_app_laedt")
+@@ -242,5 +246,15 @@
+     $("#taleward-oeffnen").disabled = !tw.app;
+     $("#taleward-browser").disabled = !tw.app;
+-    $("#taleward-neustart").hidden = art !== "fehler";
++    $("#taleward-neustart").hidden = art !== "fehler" || imUpdate;
++    const um = $("#taleward-update");
++    const hinweis_upd = upd.phase === "vorbereiten" ? t("tw_upd_vorbereiten", werte)
++      : upd.phase === "zurueckgenommen" ? t("tw_upd_zurueckgenommen", werte)
++      : upd.phase === "fehler" ? t("tw_upd_fehler", werte)
++      : upd.phase === "fertig" ? t("tw_upd_fertig", werte)
++      : !imUpdate && upd.angebot ? t(S.einstellungen.auto_update && upd.angebot !== upd.gescheitert ? "tw_upd_angebot_auto" : "tw_upd_angebot", werte) : "";
++    um.hidden = !hinweis_upd;
++    um.textContent = hinweis_upd;
++    um.className = "meldung" + (upd.phase === "zurueckgenommen" || upd.phase === "fehler" ? " meldung--hinweis" : "");
++    $("#taleward-aktualisieren").hidden = imUpdate || !upd.angebot;
+     const netz = tw.netz || {};
+     const oeffentlich = (netz.profile || []).includes("Public") && !(netz.profile || []).includes("Private");
+@@ -475,4 +489,9 @@
+     $("#taleward-browser").onclick = () => api.im_browser_oeffnen();
+     $("#taleward-neustart").onclick = () => { api.taleward_neu_starten(); setTimeout(neuLaden, 300); };
++    $("#taleward-aktualisieren").onclick = async () => {
++      const r = await api.taleward_aktualisieren();
++      if (!r.ok) toast(t(r.grund === "aktuell" ? "tw_upd_aktuell" : "tw_upd_spaeter"));
++      neuLaden();
++    };
+     $("#netz-freigeben").onclick = async () => {
+       const r = await api.netz_freigeben();
+diff --git a/taleward_worker/ui/index.html b/taleward_worker/ui/index.html
+index 0935fca..0be68ac 100644
+--- a/taleward_worker/ui/index.html
++++ b/taleward_worker/ui/index.html
+@@ -143,4 +143,5 @@
+     <div class="zeile"><div class="zeile__text"><strong id="taleward-titel"></strong><span id="taleward-text"></span></div></div>
+     <div class="meldung meldung--hinweis" id="netz-hinweis" hidden></div>
++    <div class="meldung" id="taleward-update" hidden></div>
+     <div class="knopfreihe" id="taleward-knoepfe">
+       <button class="tw-btn tw-btn--primary" id="taleward-oeffnen" data-t="Taleward öffnen"></button>
+@@ -148,4 +149,5 @@
+       <button class="tw-btn tw-btn--secondary" id="taleward-neustart" data-t="Neu starten" hidden></button>
+       <button class="tw-btn tw-btn--secondary" id="netz-freigeben" data-t="Erlauben" hidden></button>
++      <button class="tw-btn tw-btn--secondary" id="taleward-aktualisieren" data-t="Jetzt aktualisieren" hidden></button>
+     </div>
+   </div>
+diff --git a/taleward_worker/ui/texte.js b/taleward_worker/ui/texte.js
+index 1855db2..f83f569 100644
+--- a/taleward_worker/ui/texte.js
++++ b/taleward_worker/ui/texte.js
+@@ -45,4 +45,18 @@ window.TEXTE = {
+     tw_app_laedt: "Taleward lädt die App – nur beim ersten Start, dauert ein paar Minuten.",
+     tw_app_fehlt: "Die App ließ sich noch nicht laden. Prüf die Internetverbindung – Taleward versucht es weiter.",
++    tw_upd: "Taleward wird aktualisiert",
++    tw_upd_vorbereiten: "Fassung {neu} wird vorbereitet ({prozent}). Taleward läuft so lange weiter.",
++    tw_upd_sichern: "Deine Daten werden gesichert … Handys können gleich wieder hochladen.",
++    tw_upd_tauschen: "Die neue Fassung wird eingesetzt … Handys können gleich wieder hochladen.",
++    tw_upd_starten: "Taleward startet mit Fassung {neu} …",
++    tw_upd_pruefen: "Taleward startet mit Fassung {neu} …",
++    tw_upd_zurueck: "Das hat nicht geklappt. Taleward geht zurück auf Fassung {alt} …",
++    tw_upd_fertig: "Taleward ist jetzt auf Fassung {neu}.",
++    tw_upd_zurueckgenommen: "Das Update auf Fassung {neu} hat nicht geklappt. Taleward läuft weiter mit {alt}, deine Daten sind wie vorher. Du kannst es später noch einmal versuchen.",
++    tw_upd_fehler: "Fassung {neu} ließ sich nicht vorbereiten. Taleward läuft unverändert und versucht es später noch einmal.",
++    tw_upd_angebot: "Neue Fassung {neu} ist da.",
++    tw_upd_angebot_auto: "Neue Fassung {neu} – wird installiert, sobald gerade nichts verarbeitet oder hochgeladen wird.",
++    tw_upd_aktuell: "Taleward ist auf dem neuesten Stand.",
++    tw_upd_spaeter: "Gerade wird noch etwas verarbeitet oder hochgeladen. Versuch es gleich noch einmal.",
+     update_titel: "Updates automatisch installieren",
+     recaps_titel: "Recaps auch auf diesem PC schreiben",
+@@ -204,4 +218,18 @@ window.TEXTE = {
+     tw_app_laedt: "Taleward is downloading the app – only on the first start, takes a few minutes.",
+     tw_app_fehlt: "The app couldn't be downloaded yet. Check your internet connection – Taleward keeps trying.",
++    tw_upd: "Taleward is updating",
++    tw_upd_vorbereiten: "Preparing version {neu} ({prozent}). Taleward keeps running meanwhile.",
++    tw_upd_sichern: "Backing up your data … Phones can upload again in a moment.",
++    tw_upd_tauschen: "Putting the new version in place … Phones can upload again in a moment.",
++    tw_upd_starten: "Taleward is starting with version {neu} …",
++    tw_upd_pruefen: "Taleward is starting with version {neu} …",
++    tw_upd_zurueck: "That didn't work. Taleward is going back to version {alt} …",
++    tw_upd_fertig: "Taleward is now on version {neu}.",
++    tw_upd_zurueckgenommen: "The update to version {neu} didn't work. Taleward keeps running with {alt}, your data is as before. You can try again later.",
++    tw_upd_fehler: "Version {neu} couldn't be prepared. Taleward keeps running unchanged and tries again later.",
++    tw_upd_angebot: "New version {neu} is available.",
++    tw_upd_angebot_auto: "New version {neu} – will be installed as soon as nothing is being processed or uploaded.",
++    tw_upd_aktuell: "Taleward is up to date.",
++    tw_upd_spaeter: "Something is still being processed or uploaded. Try again in a moment.",
+     "Status": "Status", "Einstellungen": "Settings", "Protokoll": "Log", "Verbinden": "Connect", "Prüfen": "Check",
+     "Installieren": "Install", "Fertig": "Done", "Worker einrichten": "Set up worker", "Adresse des Servers": "Server address",
+diff --git a/uv.lock b/uv.lock
+index 40b8be1..036de53 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -677,5 +677,5 @@ wheels = [
+ [[package]]
+ name = "taleward-worker"
+-version = "0.3.1"
++version = "0.3.2"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
