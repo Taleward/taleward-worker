@@ -40,7 +40,7 @@ class Wachhalten:
             ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)  # CONTINUOUS | SYSTEM_REQUIRED
         else:
             try:
-                self._linux = subprocess.Popen(["systemd-inhibit", "--what=sleep:idle", "--who=Taleward Worker",
+                self._linux = subprocess.Popen(["systemd-inhibit", "--what=sleep:idle", "--who=Taleward",
                                                 "--why=Aufnahme wird verarbeitet", "sleep", "infinity"],
                                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except OSError:

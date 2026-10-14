@@ -33,12 +33,12 @@ if windows:
         ffi=FixedFileInfo(filevers=zahlen, prodvers=zahlen),
         kids=[StringFileInfo([StringTable("040704B0", [
             StringStruct("CompanyName", "Taleward"),
-            StringStruct("FileDescription", "Taleward Worker"),
+            StringStruct("FileDescription", "Taleward"),
             StringStruct("FileVersion", fassung),
             StringStruct("InternalName", "TalewardWorker"),
             StringStruct("LegalCopyright", "AGPL-3.0 – https://github.com/Taleward/taleward-worker"),
             StringStruct("OriginalFilename", "TalewardWorker.exe"),
-            StringStruct("ProductName", "Taleward Worker"),
+            StringStruct("ProductName", "Taleward"),
             StringStruct("ProductVersion", fassung)])]),
               VarFileInfo([VarStruct("Translation", [0x0407, 1200])])])
 

@@ -88,7 +88,7 @@ def absturz_melden(text: str) -> None:
 
             wo = f"\n\nEinzelheiten: {pfad}" if pfad else ""
             ctypes.windll.user32.MessageBoxW(  # type: ignore[attr-defined]
-                None, f"Taleward Worker konnte nicht starten.{wo}\n\n{text[-600:]}", "Taleward Worker", 0x10)
+                None, f"Taleward konnte nicht starten.{wo}\n\n{text[-600:]}", "Taleward", 0x10)
         except Exception:
             pass
     elif sys.stderr:

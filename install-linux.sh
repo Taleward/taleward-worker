@@ -63,7 +63,7 @@ curl -fsSL "$QUELLE/packaging/linux/taleward-worker.png" -o "$DATEN/icons/hicolo
 cat > "$DATEN/applications/taleward-worker.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=Taleward Worker
+Name=Taleward
 Comment=Verarbeitet Aufnahmen für deinen Taleward-Server
 Exec=$PROGRAMM
 Icon=taleward-worker
@@ -86,5 +86,5 @@ else
   rm -f "$AUTOSTART"
 fi
 
-gruen "Fertig. Taleward Worker startet jetzt – später findest du ihn im Anwendungsmenü."
+gruen "Fertig. Taleward startet jetzt – später findest du es im Anwendungsmenü."
 nohup "$PROGRAMM" >/dev/null 2>&1 &

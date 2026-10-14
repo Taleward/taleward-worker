@@ -8,7 +8,7 @@
 
 [Setup]
 AppId={{5B7C2E61-8F3A-4C8E-9C1B-7A0D4E2F9B31}
-AppName=Taleward Worker
+AppName=Taleward
 AppVersion={#Version}
 AppPublisher=Taleward
 AppPublisherURL=https://taleward.org
@@ -38,20 +38,20 @@ Name: "de"; MessagesFile: "compiler:Languages\German.isl"
 Name: "en"; MessagesFile: "compiler:Default.isl"
 
 [CustomMessages]
-de.Autostart=Mit Windows starten (empfohlen) – der Worker läuft dann unsichtbar im Hintergrund
-en.Autostart=Start with Windows (recommended) – the worker then runs invisibly in the background
-de.Starten=Taleward Worker jetzt starten
-en.Starten=Start Taleward Worker now
+de.Autostart=Mit Windows starten (empfohlen) – Taleward läuft dann unsichtbar im Hintergrund
+en.Autostart=Start with Windows (recommended) – Taleward then runs invisibly in the background
+de.Starten=Taleward jetzt starten
+en.Starten=Start Taleward now
 de.DatenLoeschen=Auch das KI-Paket, die Sprachmodelle und die Einstellungen löschen (etwa 10 GB)?%n%nBei „Nein“ bleiben sie für eine spätere Neuinstallation erhalten.
 en.DatenLoeschen=Also delete the AI package, speech models and settings (about 10 GB)?%n%nIf you choose “No”, they are kept for a later reinstall.
 de.DatenRest=Einige Dateien unter %1 konnten nicht gelöscht werden (noch in Benutzung). Bitte den Ordner nach einem Neustart von Hand löschen.
 en.DatenRest=Some files under %1 could not be deleted (still in use). Please delete the folder manually after a restart.
-de.AlsAdmin=Das Setup läuft mit Administratorrechten. Taleward Worker wird für den Benutzer installiert, der das Setup gestartet hat – nicht für das Konto, in dem Sie gerade angemeldet sind.%n%nEmpfehlung: Abbrechen und das Setup ohne „Als Administrator ausführen“ starten.%n%nTrotzdem fortfahren?
-en.AlsAdmin=Setup is running with administrator rights. Taleward Worker will be installed for the user who started Setup – not for the account you are logged in as.%n%nRecommendation: cancel and run Setup without “Run as administrator”.%n%nContinue anyway?
+de.AlsAdmin=Das Setup läuft mit Administratorrechten. Taleward wird für den Benutzer installiert, der das Setup gestartet hat – nicht für das Konto, in dem Sie gerade angemeldet sind.%n%nEmpfehlung: Abbrechen und das Setup ohne „Als Administrator ausführen“ starten.%n%nTrotzdem fortfahren?
+en.AlsAdmin=Setup is running with administrator rights. Taleward will be installed for the user who started Setup – not for the account you are logged in as.%n%nRecommendation: cancel and run Setup without “Run as administrator”.%n%nContinue anyway?
 de.WebView2Laden=Microsoft WebView2 wird geladen (für die Oberfläche nötig) …
 en.WebView2Laden=Downloading Microsoft WebView2 (needed for the user interface) …
-de.WebView2Fehlt=Microsoft WebView2 konnte nicht installiert werden. Taleward Worker zeigt beim Start einen Hinweis mit Download-Link.
-en.WebView2Fehlt=Microsoft WebView2 could not be installed. Taleward Worker will show a hint with a download link on start.
+de.WebView2Fehlt=Microsoft WebView2 konnte nicht installiert werden. Taleward zeigt beim Start einen Hinweis mit Download-Link.
+en.WebView2Fehlt=Microsoft WebView2 could not be installed. Taleward will show a hint with a download link on start.
 
 [Tasks]
 Name: "autostart"; Description: "{cm:Autostart}"
@@ -61,8 +61,13 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "..\..\dist\TalewardWorker\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{userprograms}\Taleward Worker"; Filename: "{app}\TalewardWorker.exe"
-Name: "{userdesktop}\Taleward Worker"; Filename: "{app}\TalewardWorker.exe"; Tasks: desktopicon
+Name: "{userprograms}\Taleward"; Filename: "{app}\TalewardWorker.exe"
+Name: "{userdesktop}\Taleward"; Filename: "{app}\TalewardWorker.exe"; Tasks: desktopicon
+
+[InstallDelete]
+; Bis 0.3.0 hießen die Verknüpfungen „Taleward Worker“ – beim Update nicht doppelt stehen lassen
+Type: files; Name: "{userprograms}\Taleward Worker.lnk"
+Type: files; Name: "{userdesktop}\Taleward Worker.lnk"
 
 [Registry]
 ; Gleicher Eintrag, den die App unter Einstellungen → „Mit dem Computer starten“ setzt oder entfernt
