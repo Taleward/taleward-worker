@@ -1,0 +1,403 @@
+From 22cd546a0f76bddbeec859073f9aa7bc8da69760 Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 20:58:54 +0200
+Subject: [PATCH] Worker 0.3.3
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Programmfenster: an den Browser gehen nur http(s)-Adressen. Netzwerk-
+Freigabe mit eindeutigem Regelnamen, Pfade als Base64, andere Regeln für
+dasselbe Programm werden ersetzt. Eigenes Ollama ohne fremde Einstellungen.
+---
+ packaging/windows/taleward-worker.iss |  2 +-
+ pyproject.toml                        |  2 +-
+ taleward_worker/__init__.py           |  2 +-
+ taleward_worker/fenster.py            | 39 ++++++++++--
+ taleward_worker/netzfreigabe.py       | 75 ++++++++++++++--------
+ taleward_worker/oberflaeche.py        |  1 +
+ taleward_worker/ollama.py             | 11 +++-
+ tests/test_programmfenster.py         | 89 ++++++++++++++++++++++++++-
+ uv.lock                               |  2 +-
+ 9 files changed, 181 insertions(+), 42 deletions(-)
+
+diff --git a/packaging/windows/taleward-worker.iss b/packaging/windows/taleward-worker.iss
+index b9debd0..d66958e 100644
+--- a/packaging/windows/taleward-worker.iss
++++ b/packaging/windows/taleward-worker.iss
+@@ -193,5 +193,5 @@ begin
+     if FileExists(Daten + '\firewall.txt') then
+       ShellExec('runas', 'powershell.exe',
+-        '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Remove-NetFirewallRule -DisplayName ''Taleward'' -ErrorAction SilentlyContinue"',
++        '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Remove-NetFirewallRule -Name ''Taleward-Einzelplatz'' -ErrorAction SilentlyContinue; Get-NetFirewallRule -DisplayName ''Taleward'' -ErrorAction SilentlyContinue | Where-Object { $_.Description -eq ''Taleward: Handys im eigenen WLAN'' } | Remove-NetFirewallRule"',
+         '', SW_HIDE, ewWaitUntilTerminated, Code);
+   end;
+diff --git a/pyproject.toml b/pyproject.toml
+index 243f102..2c23f30 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-worker"
+-version = "0.3.2"
++version = "0.3.3"
+ description = "Taleward Worker – verarbeitet Aufnahmen für einen Taleward-Server auf dem eigenen PC mit Grafikkarte"
+ license = "AGPL-3.0-only"
+diff --git a/taleward_worker/__init__.py b/taleward_worker/__init__.py
+index 9692447..c71c59d 100644
+--- a/taleward_worker/__init__.py
++++ b/taleward_worker/__init__.py
+@@ -4,5 +4,5 @@ Die App selbst ist klein. Das KI-Paket (Taleward-Server mit WhisperX, einige GB)
+ passender Fassung zum verbundenen Server und startet es als Unterprozess („chronik worker --app“).
+ """
+-VERSION = "0.3.2"
++VERSION = "0.3.3"
+ REPO = "Taleward/taleward-server"        # Server-Code = KI-Paket (engine-requirements.txt, Tags v…)
+ APP_REPO = "Taleward/taleward-worker"   # diese App
+diff --git a/taleward_worker/fenster.py b/taleward_worker/fenster.py
+index d86d287..540450c 100644
+--- a/taleward_worker/fenster.py
++++ b/taleward_worker/fenster.py
+@@ -7,5 +7,8 @@ Programms. Darum:
+   werden blockiert;
+ - Mikrofon nur für diese Herkunft, alle anderen Berechtigungen abgelehnt;
+-- keine Entwicklerwerkzeuge, kein Kontextmenü (nur mit TALEWARD_DEBUG).
++- keine Entwicklerwerkzeuge, kein Kontextmenü (nur mit TALEWARD_DEBUG);
++- neue Fenster (`window.open`, Links mit target) öffnet pywebview über `webbrowser.open` – das geht unter Windows an
++  `os.startfile` und damit auch an `file:`, UNC-Pfade oder fremde Schemata. `absichern()` lässt darum vor dem Start
++  des ersten Fensters nur noch http(s)-Adressen ohne Zugangsdaten durch (für beide Fenster des Programms).
+ Die Regeln für WebView2 greifen nur unter Windows; anderswo bleibt es bei den Vorgaben von pywebview.
+ """
+@@ -21,4 +24,5 @@ log = logging.getLogger("taleward_worker")
+ HOSTS = ("localhost", "127.0.0.1")
+ PORT = 8000
++_ORIGINAL_OEFFNEN = webbrowser.open
+ 
+ 
+@@ -32,11 +36,34 @@ def eigene_seite(uri: str) -> bool:
+ 
+ 
+-def extern_oeffnen(uri: str) -> None:
+-    """Links aus der App (Hilfe, Datenschutz anderer Anbieter …) im normalen Browser – nur http(s)."""
++def web_adresse(uri) -> bool:
++    """Darf diese Adresse an den Browser von Windows gehen? Nur http(s) mit Host, ohne Zugangsdaten, ohne
++    Steuerzeichen und Backslashes (Windows deutet sonst Pfade hinein)."""
++    if not isinstance(uri, str) or len(uri) > 4000 or "\\" in uri or any(ord(z) < 33 or z == "\x7f" for z in uri):
++        return False
+     try:
+-        if urlsplit(uri).scheme in ("http", "https"):
+-            threading.Thread(target=webbrowser.open, args=(uri,), daemon=True).start()
++        t = urlsplit(uri)
++        return t.scheme in ("http", "https") and bool(t.hostname) and t.username is None and t.password is None
+     except ValueError:
+-        pass
++        return False
++
++
++def nur_web_oeffnen(url, new=0, autoraise=True) -> bool:
++    if not web_adresse(url):
++        log.warning("Adresse nicht geöffnet (kein http/https): %.80r", url)
++        return False
++    return _ORIGINAL_OEFFNEN(url, new, autoraise)
++
++
++def absichern() -> None:
++    """Vor dem ersten Fenster aufrufen: Was immer pywebview oder das Programm an den Browser gibt, muss http(s) sein."""
++    webbrowser.open = nur_web_oeffnen
++    webbrowser.open_new = lambda url: nur_web_oeffnen(url, 1)
++    webbrowser.open_new_tab = lambda url: nur_web_oeffnen(url, 2)
++
++
++def extern_oeffnen(uri: str) -> None:
++    """Links aus der App (Hilfe, Datenschutz anderer Anbieter …) im normalen Browser – nur http(s)."""
++    if web_adresse(uri):
++        threading.Thread(target=nur_web_oeffnen, args=(uri,), daemon=True).start()
+ 
+ 
+diff --git a/taleward_worker/netzfreigabe.py b/taleward_worker/netzfreigabe.py
+index 2420d25..96573d0 100644
+--- a/taleward_worker/netzfreigabe.py
++++ b/taleward_worker/netzfreigabe.py
+@@ -1,11 +1,17 @@
+ """Windows-Firewall für „Alles auf diesem PC“: Handys im WLAN sollen Taleward erreichen – und sonst niemand.
+ 
+-Eine Regel „Taleward“: eingehend, nur das Python des KI-Pakets (das Programm, das tatsächlich lauscht), nur TCP 8000,
+-nur im Netzprofil „Privat“, nur aus dem lokalen Subnetz. Anlegen braucht einmal Administratorrechte (Windows fragt);
+-Prüfen geht ohne. Ist das WLAN als „Öffentlich“ eingestuft, stellt das Programm nichts still um, sondern sagt, wo man
+-es ändert. Beim Deinstallieren entfernt der Installer die Regel (Merkdatei `firewall.txt`).
+-
+-Alle PowerShell-Befehle gehen als -EncodedCommand (UTF-16, Base64) – Pfade mit Leerzeichen, Umlauten oder Anführungs-
+-zeichen können so nichts umdeuten.
++Eine Regel (Name `Taleward-Einzelplatz`, angezeigt als „Taleward“): eingehend, nur das Python des KI-Pakets (das
++Programm, das tatsächlich lauscht), nur TCP 8000, nur im Netzprofil „Privat“, nur aus dem lokalen Subnetz. Anlegen
++braucht einmal Administratorrechte (Windows fragt); Prüfen geht ohne. Andere eingehende Regeln für genau dieses Python
++(z. B. die, die Windows bei seiner eigenen Rückfrage anlegt, auch für „Öffentlich“) ersetzt das Anlegen; solange es sie
++gibt, gilt die Freigabe als nicht in Ordnung. Ist das WLAN als „Öffentlich“ eingestuft, stellt das Programm nichts still
++um, sondern sagt, wo man es ändert. Beim Deinstallieren entfernt der Installer die Regel (Merkdatei `firewall.txt`, wird
++vor dem Anlegen geschrieben).
++
++Grenze: Die Regel gilt für das Python im Benutzerordner. Jedes Programm, das dieser Windows-Nutzer mit genau diesem
++Python startet, dürfte auf TCP 8000 aus dem Heimnetz lauschen – solange Taleward läuft, ist der Anschluss belegt.
++
++Alle PowerShell-Befehle gehen als -EncodedCommand (UTF-16, Base64); Pfade und Namen stehen darin nochmals als Base64
++(UTF-8) – Leerzeichen, Umlaute oder Anführungszeichen jeder Art können so nichts umdeuten.
+ """
+ from __future__ import annotations
+@@ -21,5 +27,7 @@ from taleward_worker import motor, pfade
+ 
+ log = logging.getLogger("taleward_worker")
+-REGEL = "Taleward"
++REGEL = "Taleward"                    # Anzeigename
++REGEL_NAME = "Taleward-Einzelplatz"   # eindeutiger Name – entfernt wird nur diese Regel
++BESCHREIBUNG = "Taleward: Handys im eigenen WLAN"
+ PORT = 8000
+ WINDOWS = sys.platform == "win32"
+@@ -27,6 +35,9 @@ WINDOWS = sys.platform == "win32"
+ 
+ def _ps(text: str) -> str:
+-    """PowerShell-Zeichenkette in einfachen Anführungszeichen (dort zählt nur ' – verdoppelt)."""
+-    return "'" + text.replace("'", "''") + "'"
++    """Zeichenkette für PowerShell, ohne dass irgendein Zeichen darin etwas bedeutet: Base64 (UTF-8), erst in
++    PowerShell zurückverwandelt. (PowerShell wertet auch typografische Anführungszeichen ‘ ’ ‚ ‛ als Ende einer
++    Zeichenkette – ein bloßes Verdoppeln von ' reicht nicht.)"""
++    roh = base64.b64encode(text.encode("utf-8")).decode("ascii")
++    return f"([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{roh}')))"
+ 
+ 
+@@ -59,9 +70,14 @@ def lauschendes_programm() -> Path | None:
+ 
+ 
+-def regel_lesen() -> dict | None:
++def regel_lesen(programm: Path | None = None) -> dict | None:
+     if not WINDOWS:
+         return None
++    fremd = "0"
++    if programm is not None:  # andere eingehende, eingeschaltete Regeln für genau dieses Programm
++        fremd = (f"@(Get-NetFirewallApplicationFilter -Program {_ps(str(programm))} -ErrorAction SilentlyContinue | "
++                 f"Get-NetFirewallRule | Where-Object {{ $_.Name -ne {_ps(REGEL_NAME)} -and $_.Direction -eq 'Inbound' "
++                 f"-and [string]$_.Enabled -eq 'True' }}).Count")
+     skript = f"""
+-$r = Get-NetFirewallRule -DisplayName {_ps(REGEL)} -ErrorAction SilentlyContinue | Select-Object -First 1
++$r = Get-NetFirewallRule -Name {_ps(REGEL_NAME)} -ErrorAction SilentlyContinue | Select-Object -First 1
+ if ($r) {{
+   $a = $r | Get-NetFirewallApplicationFilter
+@@ -70,5 +86,5 @@ if ($r) {{
+   [pscustomobject]@{{ Program = [string]$a.Program; Port = [string]$p.LocalPort; Protocol = [string]$p.Protocol;
+     Profile = [string]$r.Profile; Enabled = [string]$r.Enabled; Action = [string]$r.Action;
+-    Remote = (@($d.RemoteAddress) -join ',') }} | ConvertTo-Json -Compress
++    Remote = (@($d.RemoteAddress) -join ','); Fremd = [int]({fremd}) }} | ConvertTo-Json -Compress
+ }}"""
+     try:
+@@ -86,5 +102,5 @@ def regel_passt(regel: dict | None, programm: Path | None) -> bool:
+             and regel.get("Protocol", "").upper() == "TCP" and regel.get("Enabled") == "True"
+             and regel.get("Action") == "Allow" and regel.get("Profile") == "Private"
+-            and regel.get("Remote") == "LocalSubnet")
++            and regel.get("Remote") == "LocalSubnet" and not regel.get("Fremd"))
+ 
+ 
+@@ -93,5 +109,6 @@ def stand() -> dict:
+     if not WINDOWS:
+         return {"noetig": False}
+-    return {"noetig": True, "regel": regel_passt(regel_lesen(), lauschendes_programm()), "profile": netzprofile()}
++    programm = lauschendes_programm()
++    return {"noetig": True, "regel": regel_passt(regel_lesen(programm), programm), "profile": netzprofile()}
+ 
+ 
+@@ -108,13 +125,18 @@ def netzprofile() -> list[str]:
+ 
+ def anlegen_skript(programm: Path) -> str:
+-    """Alte Regel ersetzen; Sperr-Regeln, die Windows beim Abbrechen seiner eigenen Rückfrage für genau dieses
+-    Python angelegt hat, entfernen (sie gingen der Erlaubnis vor). Andere Regeln bleiben unberührt."""
++    """Eigene Regel ersetzen; alle anderen eingehenden Regeln für genau dieses Python entfernen – Sperr-Regeln, die
++    Windows beim Abbrechen seiner eigenen Rückfrage anlegt (gingen der Erlaubnis vor), und Erlaubnis-Regeln aus dieser
++    Rückfrage (oft auch für „Öffentlich“). Regeln für andere Programme bleiben unberührt; ebenso fremde Regeln, die nur
++    zufällig „Taleward“ heißen. Ältere Fassungen (bis 0.3.2) legten die Regel nur mit Anzeigenamen an."""
+     p = _ps(str(programm))
+     return f"""$ErrorActionPreference = 'Stop'
+-Remove-NetFirewallRule -DisplayName {_ps(REGEL)} -ErrorAction SilentlyContinue
++Remove-NetFirewallRule -Name {_ps(REGEL_NAME)} -ErrorAction SilentlyContinue
++Get-NetFirewallRule -DisplayName {_ps(REGEL)} -ErrorAction SilentlyContinue |
++  Where-Object {{ $_.Description -eq {_ps(BESCHREIBUNG)} }} | Remove-NetFirewallRule
+ Get-NetFirewallApplicationFilter -Program {p} -ErrorAction SilentlyContinue | Get-NetFirewallRule |
+-  Where-Object {{ $_.Action -eq 'Block' -and $_.Direction -eq 'Inbound' }} | Remove-NetFirewallRule
+-New-NetFirewallRule -DisplayName {_ps(REGEL)} -Description 'Taleward: Handys im eigenen WLAN' -Direction Inbound `
+-  -Action Allow -Program {p} -Protocol TCP -LocalPort {PORT} -Profile Private -RemoteAddress LocalSubnet | Out-Null
++  Where-Object {{ $_.Direction -eq 'Inbound' }} | Remove-NetFirewallRule
++New-NetFirewallRule -Name {_ps(REGEL_NAME)} -DisplayName {_ps(REGEL)} -Description {_ps(BESCHREIBUNG)} `
++  -Direction Inbound -Action Allow -Program {p} -Protocol TCP -LocalPort {PORT} -Profile Private `
++  -RemoteAddress LocalSubnet | Out-Null
+ """
+ 
+@@ -127,11 +149,10 @@ def anlegen() -> bool:
+     if programm is None:
+         return False
++    try:  # vorher: auch wenn das Skript nach dem Anlegen scheitert, findet der Deinstaller die Regel
++        (pfade.basis() / "firewall.txt").write_text(REGEL_NAME, encoding="utf-8")
++    except OSError:
++        pass
+     ok = _als_admin("powershell.exe", " ".join(_kodiert(anlegen_skript(programm))))
+-    if ok:
+-        try:
+-            (pfade.basis() / "firewall.txt").write_text(REGEL, encoding="utf-8")  # für den Deinstaller
+-        except OSError:
+-            pass
+-    return ok and regel_passt(regel_lesen(), programm)
++    return ok and regel_passt(regel_lesen(programm), programm)
+ 
+ 
+diff --git a/taleward_worker/oberflaeche.py b/taleward_worker/oberflaeche.py
+index bf48167..eff446a 100644
+--- a/taleward_worker/oberflaeche.py
++++ b/taleward_worker/oberflaeche.py
+@@ -713,4 +713,5 @@ class WorkerApp:
+             return
+         self.hardware = hardware.bericht()
++        fenster.absichern()  # vor dem ersten Fenster: an den Browser nur noch http(s)
+         self._tray_starten()
+         versteckt = self.hintergrund and self.e.gekoppelt
+diff --git a/taleward_worker/ollama.py b/taleward_worker/ollama.py
+index 322a79f..e41b6fc 100644
+--- a/taleward_worker/ollama.py
++++ b/taleward_worker/ollama.py
+@@ -227,5 +227,8 @@ class OllamaDienst:
+         if not self.laeuft() and antwortet(self.eigene_adresse):
+             # Läuft schon – von einer abgestürzten App übrig geblieben oder von einem zweiten Benutzer. Ein zweiter
+-            # Start könnte den Port nicht belegen; die vorhandene Instanz tut es genauso.
++            # Start könnte den Port nicht belegen; die vorhandene Instanz tut es genauso – außer sie ist im Netz offen.
++            if nur_geschlossen and im_netz_offen(EIGENER_PORT):
++                self.fehler = f"Port {EIGENER_PORT} belegt von einem Ollama, das im Netz erreichbar ist"
++                return AUS
+             self.fehler = ""
+             return self.eigene_adresse
+@@ -243,6 +246,8 @@ class OllamaDienst:
+                 return False
+             modellordner().mkdir(parents=True, exist_ok=True)
+-            env = {**os.environ, "OLLAMA_HOST": f"127.0.0.1:{EIGENER_PORT}", "OLLAMA_MODELS": str(modellordner()),
+-                   "OLLAMA_KEEP_ALIVE": "2m", "OLLAMA_MAX_LOADED_MODELS": "1"}
++            # Nichts von außen übernehmen, was Ollama öffnet oder umstellt (OLLAMA_ORIGINS, OLLAMA_HOST …)
++            env = {k: v for k, v in os.environ.items() if not k.upper().startswith("OLLAMA_")}
++            env.update({"OLLAMA_HOST": f"127.0.0.1:{EIGENER_PORT}", "OLLAMA_MODELS": str(modellordner()),
++                        "OLLAMA_KEEP_ALIVE": "2m", "OLLAMA_MAX_LOADED_MODELS": "1"})
+             protokoll_kuerzen(pfade.protokolle() / "ollama.log")
+             log = open(pfade.protokolle() / "ollama.log", "ab")
+diff --git a/tests/test_programmfenster.py b/tests/test_programmfenster.py
+index 41e581d..6b80f9f 100644
+--- a/tests/test_programmfenster.py
++++ b/tests/test_programmfenster.py
+@@ -36,11 +36,27 @@ def test_firewall_regel_nur_wie_vorgesehen():
+         assert not nf.regel_passt({**gut, name: wert}, py), name
+     assert not nf.regel_passt(None, py) and not nf.regel_passt(gut, None)
++    assert not nf.regel_passt({**gut, "Fremd": 1}, py)  # daneben noch eine Windows-Regel für dasselbe Python
++    assert nf.regel_passt({**gut, "Fremd": 0}, py)
+     skript = nf.anlegen_skript(py)
+-    assert "-Program 'C:\\Users\\Jörg O''Neill\\AppData" in skript  # Apostroph verdoppelt, nichts sonst gedeutet
+-    assert "-Profile Private -RemoteAddress LocalSubnet" in skript and f"-LocalPort {nf.PORT}" in skript
++    assert "Jörg" not in skript and "O'Neill" not in skript  # Pfad nur als Base64 – nichts darin wird gedeutet
++    assert nf._ps(str(py)) in skript and "-Name " + nf._ps("Taleward-Einzelplatz") in skript
++    assert "-Profile Private" in skript and "-RemoteAddress LocalSubnet" in skript and f"-LocalPort {nf.PORT}" in skript
++    assert "Remove-NetFirewallRule -DisplayName" not in skript  # nie alle Regeln eines Anzeigenamens
+     args = nf._kodiert(skript)
+     assert base64.b64decode(args[-1]).decode("utf-16-le") == skript and "-EncodedCommand" in args
+ 
+ 
++def test_powershell_zeichenkette_ohne_deutung():
++    import base64
++    import re
++
++    from taleward_worker import netzfreigabe as nf
++
++    for text in ("C:\\Jörg’s ‚Ordner‛\\x.exe", "a'b\"c`$d", "Taleward"):
++        roh = re.fullmatch(r"\(\[Text\.Encoding\]::UTF8\.GetString\(\[Convert\]::FromBase64String\('([A-Za-z0-9+/=]*)'\)\)\)",
++                           nf._ps(text)).group(1)
++        assert base64.b64decode(roh).decode("utf-8") == text
++
++
+ def test_firewall_ausserhalb_von_windows(monkeypatch):
+     from taleward_worker import netzfreigabe as nf
+@@ -61,2 +77,71 @@ def test_offenes_fremdes_ollama_nicht_im_einzelplatz(monkeypatch):
+     monkeypatch.setattr(ollama, "antwortet", lambda url, zeit=2.0: url == ollama.FREMDE_ADRESSE)
+     assert d.adresse(True, nur_geschlossen=True) == ollama.FREMDE_ADRESSE  # nur auf diesem PC → in Ordnung
++
++
++def test_neue_fenster_nur_mit_web_adressen(monkeypatch):
++    """window.open & Co. landen bei pywebview in webbrowser.open – nach absichern() nur noch http(s)."""
++    import webbrowser
++
++    from taleward_worker import fenster
++
++    geoeffnet = []
++    monkeypatch.setattr(fenster, "_ORIGINAL_OEFFNEN", lambda url, new=0, autoraise=True: geoeffnet.append(url) or True)
++    for name in ("open", "open_new", "open_new_tab"):
++        monkeypatch.setattr(webbrowser, name, getattr(webbrowser, name))  # nach dem Test wiederherstellen
++    fenster.absichern()
++    for boese in ("file:///C:/Windows/System32/calc.exe", "\\\\server\\freigabe\\x.exe", "//server/freigabe/x.exe",
++                  "ms-msdt:/id PCWDiagnostic", "search-ms:query=x", "javascript:alert(1)", "C:\\Windows\\x.exe",
++                  "https://user:pw@taleward.org/", "https://taleward.org/\\..\\x", "https://taleward.org/a b",
++                  "https://taleward.org/\n", None, ""):
++        assert webbrowser.open(boese) is False, boese
++        assert webbrowser.open_new_tab(boese) is False, boese
++    assert webbrowser.open("https://taleward.org/hilfe") and webbrowser.open_new("http://localhost:8000/app/")
++    assert geoeffnet == ["https://taleward.org/hilfe", "http://localhost:8000/app/"]
++
++
++def test_pywebview_oeffnet_ueber_webbrowser_open():
++    """absichern() greift nur, solange pywebview webbrowser.open zur Laufzeit nachschlägt (nicht vorab importiert)."""
++    from pathlib import Path
++
++    import webview
++
++    for datei in (Path(webview.__file__).parent / "platforms").glob("*.py"):
++        text = datei.read_text(encoding="utf-8")
++        assert "from webbrowser import" not in text, datei.name
++        if "webbrowser" in text:
++            assert "import webbrowser" in text, datei.name
++
++
++def test_ollama_ohne_fremde_einstellungen(monkeypatch, tmp_path):
++    import subprocess
++
++    from taleward_worker import ollama
++
++    monkeypatch.setenv("OLLAMA_ORIGINS", "*")
++    monkeypatch.setenv("OLLAMA_HOST", "0.0.0.0:11434")
++    monkeypatch.setattr(ollama, "programm", lambda: tmp_path / "ollama")
++    monkeypatch.setattr(ollama, "antwortet", lambda url, zeit=2.0: True)
++    umgebung = {}
++
++    class P:
++        returncode = None
++
++        def poll(self):
++            return None
++    monkeypatch.setattr(subprocess, "Popen", lambda befehl, env=None, **k: umgebung.update(env) or P())
++    monkeypatch.setattr(ollama.prozesse, "zuordnen", lambda p: None)
++    d = ollama.OllamaDienst()
++    assert d.starten(warten_s=1)
++    d._prozess = None  # Ersatzprozess – beim Beenden nichts aufräumen
++    assert umgebung["OLLAMA_HOST"] == f"127.0.0.1:{ollama.EIGENER_PORT}" and "OLLAMA_ORIGINS" not in umgebung
++
++
++def test_offenes_ollama_auf_dem_eigenen_port_nicht_im_einzelplatz(monkeypatch):
++    from taleward_worker import ollama
++
++    d = ollama.OllamaDienst()
++    monkeypatch.setattr(ollama, "antwortet", lambda url, zeit=2.0: str(ollama.EIGENER_PORT) in url)  # kein fremdes
++    monkeypatch.setattr(ollama, "eigene_netzadressen", lambda: ["192.168.178.24"])
++    monkeypatch.setattr(ollama, "installiert", lambda: False)
++    assert d.adresse(True) == d.eigene_adresse                    # mit einem Server verbunden: wie bisher
++    assert d.adresse(True, nur_geschlossen=True) == ollama.AUS    # auch im Heimnetz offen → nicht übernehmen
+diff --git a/uv.lock b/uv.lock
+index 036de53..0ceb8f6 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -677,5 +677,5 @@ wheels = [
+ [[package]]
+ name = "taleward-worker"
+-version = "0.3.2"
++version = "0.3.3"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
