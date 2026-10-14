@@ -44,6 +44,10 @@ de.Starten=Taleward jetzt starten
 en.Starten=Start Taleward now
 de.DatenLoeschen=Auch das KI-Paket, die Sprachmodelle und die Einstellungen löschen (etwa 10 GB)?%n%nBei „Nein“ bleiben sie für eine spätere Neuinstallation erhalten.
 en.DatenLoeschen=Also delete the AI package, speech models and settings (about 10 GB)?%n%nIf you choose “No”, they are kept for a later reinstall.
+de.KampagnenLoeschen=Auch deine Kampagnen von „Alles auf diesem PC“ löschen (Runden, Kapitel, Bilder, Konten)?%n%nBei „Nein“ bleiben sie erhalten und sind nach einer Neuinstallation wieder da. Willst du sie mitnehmen, speichere vorher in Taleward unter Einstellungen eine Sicherung.
+en.KampagnenLoeschen=Also delete your campaigns from “Everything on this PC” (sessions, chapters, images, accounts)?%n%nIf you choose “No”, they are kept and are back after a reinstall. If you want to take them with you, first save a backup in Taleward under Settings.
+de.KampagnenWirklich=Die Kampagnen werden endgültig gelöscht. Das lässt sich nicht rückgängig machen.%n%nWirklich löschen?
+en.KampagnenWirklich=The campaigns will be deleted for good. This can't be undone.%n%nReally delete them?
 de.DatenRest=Einige Dateien unter %1 konnten nicht gelöscht werden (noch in Benutzung). Bitte den Ordner nach einem Neustart von Hand löschen.
 en.DatenRest=Some files under %1 could not be deleted (still in use). Please delete the folder manually after a restart.
 de.AlsAdmin=Das Setup läuft mit Administratorrechten. Taleward wird für den Benutzer installiert, der das Setup gestartet hat – nicht für das Konto, in dem Sie gerade angemeldet sind.%n%nEmpfehlung: Abbrechen und das Setup ohne „Als Administrator ausführen“ starten.%n%nTrotzdem fortfahren?
@@ -178,9 +182,12 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Code: Integer;
   Daten: String;
+  Kampagnen: String;
   Befehl: String;
 begin
   Daten := ExpandConstant('{localappdata}\Taleward Worker');
+  { „Alles auf diesem PC“: Kampagnen, Konten und Sicherungen von Taleward – eigene Frage, standardmäßig behalten }
+  Kampagnen := ExpandConstant('{localappdata}\Taleward\Daten');
   if CurUninstallStep = usUninstall then
   begin
     LaufendeAppBeenden();
@@ -202,5 +209,14 @@ begin
        (MsgBox(CustomMessage('DatenLoeschen'), mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES) then
       if not DelTree(Daten, True, True, True) then
         MsgBox(FmtMessage(CustomMessage('DatenRest'), [Daten]), mbInformation, MB_OK);
+    if (not UninstallSilent) and DirExists(Kampagnen) and
+       (MsgBox(CustomMessage('KampagnenLoeschen'), mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES) and
+       (MsgBox(CustomMessage('KampagnenWirklich'), mbError, MB_YESNO or MB_DEFBUTTON2) = IDYES) then
+    begin
+      if not DelTree(Kampagnen, True, True, True) then
+        MsgBox(FmtMessage(CustomMessage('DatenRest'), [Kampagnen]), mbInformation, MB_OK)
+      else
+        RemoveDir(ExpandConstant('{localappdata}\Taleward'));  { nur, wenn er jetzt leer ist }
+    end;
   end;
 end;
