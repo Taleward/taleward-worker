@@ -1,0 +1,528 @@
+From 84297a6b04b888dcafaf0936359ec33087b1883f Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Thu, 15 Oct 2026 00:03:20 +0200
+Subject: [PATCH 38/40] Worker: Betriebsart wechseln, Sicherung mit Passwort,
+ Hilfe-Datei
+
+---
+ taleward_worker/mitnehmen.py    | 204 ++++++++++++++++++++++++++++++++
+ taleward_worker/oberflaeche.py  | 127 +++++++++++++++++++-
+ taleward_worker/serverupdate.py |   4 +-
+ tests/test_betriebsart.py       |  98 +++++++++++++++
+ 4 files changed, 428 insertions(+), 5 deletions(-)
+ create mode 100644 taleward_worker/mitnehmen.py
+ create mode 100644 tests/test_betriebsart.py
+
+diff --git a/taleward_worker/mitnehmen.py b/taleward_worker/mitnehmen.py
+new file mode 100644
+index 0000000..c59b4de
+--- /dev/null
++++ b/taleward_worker/mitnehmen.py
+@@ -0,0 +1,204 @@
++"""Sicherung mit Passwort und Hilfe-Datei – für „Alles auf diesem PC“.
++
++Sicherung: Der Server legt sie an und verschlüsselt sie mit dem Passwort (`chronik sicherung-export`, ab Server
++0.4.100); das Passwort geht nur über die Standardeingabe, nie in die Befehlszeile oder ins Protokoll. Zurückspielen
++geht nur bei angehaltenem Taleward: anhalten, `chronik sicherung-import` (der jetzige Stand wird vorher gesichert),
++wieder starten.
++
++Hilfe-Datei: Fassungen, System, Einstellungen und die letzten Zeilen der Protokolle – ohne Schlüssel, Passwörter,
++E-Mail-Adressen und den Windows-Benutzernamen. Die Oberfläche zeigt sie vor dem Speichern genau so, wie sie
++gespeichert wird.
++"""
++from __future__ import annotations
++
++import os
++import platform
++import re
++import threading
++import time
++from pathlib import Path
++
++from taleward_worker import VERSION, motor, pfade
++
++MIN_PASSWORT = 8
++ENDUNG = ".taleward"
++
++
++class Sicherung:
++    """Läuft in einem eigenen Faden; die Oberfläche fragt `stand()` ab."""
++
++    def __init__(self, app):
++        self.app = app
++        self.phase = ""     # "" | speichern | zurueckspielen | fertig | fehler
++        self.art = ""       # speichern | zurueckspielen
++        self.fehler = ""    # passwort | format | beschaeftigt | unbekannt
++        self.datei = ""     # nur der Dateiname, zum Anzeigen
++        self.gewaehlt: Path | None = None
++        self._sperre = threading.Lock()
++
++    def laeuft(self) -> bool:
++        return self.phase in ("speichern", "zurueckspielen")
++
++    def stand(self) -> dict:
++        return {"phase": self.phase, "art": self.art, "fehler": self.fehler, "datei": self.datei,
++                "gewaehlt": self.gewaehlt.name if self.gewaehlt else ""}
++
++    def _hindernis(self) -> str | None:
++        a = self.app
++        if self.laeuft() or a.ep_update.laeuft():
++            return "beschaeftigt"
++        if a.installation and a.installation.phase not in ("fertig", "fehler", "abgebrochen"):
++            return "beschaeftigt"
++        return None
++
++    # ------------------------------------------------------------------ Speichern
++    def speichern(self, ziel: Path, passwort: str) -> dict:
++        with self._sperre:
++            grund = self._hindernis()
++            if grund:
++                return {"ok": False, "fehler": grund}
++            if not self.app.server.bereit.is_set():
++                return {"ok": False, "fehler": "startet_noch"}
++            self.phase, self.art, self.fehler, self.datei = "speichern", "speichern", "", ziel.name
++        threading.Thread(target=self._speichern, args=(ziel, passwort), daemon=True, name="sicherung").start()
++        return {"ok": True}
++
++    def _speichern(self, ziel: Path, passwort: str) -> None:
++        try:
++            r = self.app.ep_update.cli("sicherung-export", str(ziel), eingabe=passwort + "\n")
++            m = re.search(r"Sicherung gespeichert: (.+)$", r.stdout.strip(), re.M)
++            if r.returncode != 0 or not m:
++                self._protokoll("Sicherung nicht gespeichert: " + (r.stderr or r.stdout).strip()[-300:])
++                self.phase, self.fehler = "fehler", "unbekannt"
++                return
++            self.datei = Path(m.group(1).strip()).name
++            self._protokoll(f"Sicherung gespeichert: {self.datei}")
++            self.phase = "fertig"
++        except Exception as e:  # noqa: BLE001 – die Oberfläche zeigt den Fehler
++            self._protokoll(f"Sicherung nicht gespeichert: {type(e).__name__}")
++            self.phase, self.fehler = "fehler", "unbekannt"
++
++    # ------------------------------------------------------------------ Zurückspielen
++    def zurueckspielen(self, passwort: str) -> dict:
++        with self._sperre:
++            grund = self._hindernis()
++            if grund:
++                return {"ok": False, "fehler": grund}
++            if not self.gewaehlt or not self.gewaehlt.is_file():
++                return {"ok": False, "fehler": "keine_datei"}
++            if self.app.dienst.zustand.get("art") == "arbeitet":
++                return {"ok": False, "fehler": "beschaeftigt"}
++            datei = self.gewaehlt
++            self.phase, self.art, self.fehler, self.datei = "zurueckspielen", "zurueckspielen", "", datei.name
++        threading.Thread(target=self._zurueckspielen, args=(datei, passwort), daemon=True,
++                         name="zurueckspielen").start()
++        return {"ok": True}
++
++    def _zurueckspielen(self, datei: Path, passwort: str) -> None:
++        a = self.app
++        try:
++            a.dienst.stoppen()
++            a.server.stoppen()
++            r = a.ep_update.cli("sicherung-import", str(datei), "--ja", eingabe=passwort + "\n")
++            if r.returncode == 2:
++                self.phase, self.fehler = "fehler", "passwort"
++            elif r.returncode != 0:
++                self._protokoll("Sicherung nicht zurückgespielt: " + (r.stderr or r.stdout).strip()[-300:])
++                self.phase, self.fehler = "fehler", "format"
++            else:
++                self._protokoll(f"Sicherung zurückgespielt: {datei.name}")
++                if not a.e.konto_angelegt:  # neuer PC: das Konto kommt aus der Sicherung
++                    a.e.konto_angelegt, a.e.anmeldename = True, ""
++                    a.e.speichern()
++                self.gewaehlt = None
++                self.phase = "fertig"
++        except Exception as e:  # noqa: BLE001
++            self._protokoll(f"Sicherung nicht zurückgespielt: {type(e).__name__}")
++            self.phase, self.fehler = "fehler", "unbekannt"
++        finally:
++            a.taleward_starten()
++
++    def _protokoll(self, text: str) -> None:
++        try:
++            self.app.dienst.protokoll.schreiben(text)
++        except Exception:  # noqa: BLE001
++            pass
++
++
++# ---------------------------------------------------------------------- Hilfe-Datei
++_MUSTER = [
++    (re.compile(r"\bwk\.[A-Za-z0-9_.\-]+"), "wk.[entfernt]"),
++    (re.compile(r"\bdpapi:[A-Za-z0-9+/=]+"), "dpapi:[entfernt]"),
++    (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9_.\-~+/=]+"), "Bearer [entfernt]"),
++    (re.compile(r"\bhf_[A-Za-z0-9]{8,}"), "hf_[entfernt]"),
++    (re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_\-]{8,}"), "[Schlüssel entfernt]"),
++    (re.compile(r"\b[A-Z0-9]{4}-[A-Z0-9]{4}\b"), "[Code entfernt]"),
++    (re.compile(r"(?i)\b(token|passwor[dt]|password|secret|api[_-]?key|schl(?:ü|ue)ssel|key)(\"?\s*[:=]\s*\"?)"
++                r"[^\s\"',;&\[]+"), r"\1\2[entfernt]"),
++    (re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"), "[E-Mail entfernt]"),
++    (re.compile(r"([?&](?:token|key|code|sig|signature|access_token)=)[^&\s]+", re.I), r"\1[entfernt]"),
++]
++
++
++def schwaerzen(text: str) -> str:
++    """Schlüssel, Passwörter, Codes, E-Mail-Adressen und den Benutzerordner unkenntlich machen."""
++    for muster, ersatz in _MUSTER:
++        text = muster.sub(ersatz, text)
++    heim = str(Path.home())
++    if len(heim) > 3:
++        text = text.replace(heim, "%USERPROFILE%").replace(heim.replace("\\", "/"), "%USERPROFILE%")
++    try:
++        nutzer = os.getlogin()
++    except OSError:
++        nutzer = os.environ.get("USERNAME") or os.environ.get("USER") or ""
++    if len(nutzer) >= 3:
++        text = re.sub(re.escape(nutzer), "[Benutzer]", text, flags=re.I)
++    return text
++
++
++def _letzte_zeilen(datei: Path, anzahl: int) -> list[str]:
++    try:
++        with datei.open("rb") as f:
++            f.seek(0, 2)
++            f.seek(max(0, f.tell() - 400_000))
++            return f.read().decode("utf-8", errors="replace").splitlines()[-anzahl:]
++    except OSError:
++        return []
++
++
++def hilfe_text(app) -> str:
++    e = app.e
++    inst = motor.installiert() or {}
++    hw = app.hardware or {}
++    karte = hw.get("grafikkarte") or {}
++    zeilen = [
++        "Taleward – Hilfe-Datei",
++        f"Erstellt: {time.strftime('%Y-%m-%d %H:%M')}",
++        "",
++        "== Fassungen",
++        f"Programm: {VERSION}",
++        f"KI-Paket: {inst.get('fassung') or '–'} ({'Testmodus' if inst.get('testmodus') else inst.get('backend') or '–'})",
++        f"Server: {app.server_version or '–'}",
++        f"System: {platform.system()} {platform.release()} ({platform.version()}), {platform.machine()}",
++        f"Grafikkarte: {karte.get('name') or '–'} ({karte.get('vram_mb') or '–'} MB, Treiber {karte.get('treiber') or '–'})",
++        f"Arbeitsspeicher: {hw.get('ramGb') or '–'} GB · frei auf dem Datenträger: {hw.get('platzGb') or '–'} GB",
++        "",
++        "== Einstellungen",
++        f"Betriebsart: {e.art or '–'} · Gekoppelt: {'ja' if e.gekoppelt else 'nein'}",
++        f"Testmodus: {e.testmodus} · Gerät: {e.geraet} · Modell: {e.modell} · Grafikspeicher-Grenze: {e.vram_grenze_mb}",
++        f"Recaps auf diesem PC: {e.recaps_lokal} · Pausiert: {e.pausiert} · Automatische Updates: {e.auto_update}",
++        f"Zustand des Workers: {app.dienst.zustand.get('art')} {app.dienst.zustand.get('code') or ''}".rstrip(),
++    ]
++    if e.einzelplatz:
++        z = app.server.zustand
++        zeilen.append(f"Taleward auf diesem PC: {z.get('art')} {z.get('code') or ''}".rstrip())
++        zeilen.append(f"Update: {app.ep_update.phase or '–'} {app.ep_update.fehler or ''}".rstrip())
++        if app.netz and app.netz.get("noetig"):
++            zeilen.append(f"Netz: Freigabe {'ja' if app.netz.get('regel') else 'nein'}, "
++                          f"Netzprofil {', '.join(app.netz.get('profile') or []) or '–'}")
++    if app.installation and app.installation.phase != "fertig":
++        zeilen += ["", "== Installation", *app.installation.zeilen[-120:]]
++    zeilen += ["", "== Protokoll des Workers", *_letzte_zeilen(pfade.protokolle() / "worker.log", 300)]
++    if e.einzelplatz:
++        zeilen += ["", "== Protokoll von Taleward", *_letzte_zeilen(pfade.protokolle() / "server.log", 300)]
++    return schwaerzen("\n".join(zeilen)) + "\n"
+diff --git a/taleward_worker/oberflaeche.py b/taleward_worker/oberflaeche.py
+index eff446a..75e9ad3 100644
+--- a/taleward_worker/oberflaeche.py
++++ b/taleward_worker/oberflaeche.py
+@@ -10,7 +10,8 @@ import threading
+ import time
+ import webbrowser
++from pathlib import Path
+ 
+-from taleward_worker import (VERSION, autostart, einzelplatz, fenster, hardware, motor, netzfreigabe, ollama, pfade,
+-                             selbstupdate, server, serverupdate)
++from taleward_worker import (VERSION, autostart, einzelplatz, fenster, hardware, mitnehmen, motor, netzfreigabe,
++                             ollama, pfade, selbstupdate, server, serverupdate)
+ from taleward_worker.dienst import Dienst
+ from taleward_worker.einstellungen import Einstellungen
+@@ -39,5 +40,6 @@ class Api:
+             "entwicklung": bool(os.environ.get("TALEWARD_MOTOR")),
+             "ollama": a.ollama_stand(),
+-            "taleward": {**a.server.fuer_oberflaeche(), "netz": a.netz, "update": a.ep_update.fuer_oberflaeche()}
++            "taleward": {**a.server.fuer_oberflaeche(), "netz": a.netz, "update": a.ep_update.fuer_oberflaeche(),
++                         "sicherung": a.sicherung.stand()}
+             if a.e.einzelplatz else None,
+         }
+@@ -52,4 +54,18 @@ class Api:
+         return {"ok": True}
+ 
++    def betrieb_wechseln(self, ziel: str) -> dict:
++        """Zwischen „Alles auf diesem PC“ und „Mit einem Server verbinden“ wechseln – in beide Richtungen. Die
++        Kampagnen von „Alles auf diesem PC“ bleiben auf dem PC und sind nach dem Zurückwechseln wieder da."""
++        a = self._app
++        if ziel not in ("einzelplatz", "verbunden") or ziel == a.e.art:
++            return {"ok": False, "fehler": "unbekannt"}
++        if a.ep_update.laeuft() or a.sicherung.laeuft() or (
++                a.installation and a.installation.phase not in ("fertig", "fehler", "abgebrochen")):
++            return {"ok": False, "fehler": "beschaeftigt"}
++        if a.dienst.zustand.get("art") == "arbeitet":
++            return {"ok": False, "fehler": "arbeitet"}
++        threading.Thread(target=a.betrieb_wechseln, args=(ziel,), daemon=True, name="betrieb").start()
++        return {"ok": True}
++
+     def konto_anlegen(self, name: str, passwort: str, passwort2: str) -> dict:
+         a = self._app
+@@ -101,4 +117,56 @@ class Api:
+         return self._app.ep_update.jetzt()
+ 
++    # -- Sicherung und Hilfe-Datei
++    def sicherung_speichern(self, passwort: str, passwort2: str) -> dict:
++        a = self._app
++        if not a.e.einzelplatz:
++            return {"ok": False, "fehler": "unbekannt"}
++        if len(passwort or "") < mitnehmen.MIN_PASSWORT:
++            return {"ok": False, "fehler": "password_too_short"}
++        if passwort != passwort2:
++            return {"ok": False, "fehler": "passwoerter_ungleich"}
++        ziel = a.datei_waehlen(speichern=True, name=f"taleward-sicherung-{time.strftime('%Y-%m-%d')}"
++                               f"{mitnehmen.ENDUNG}")
++        if not ziel:
++            return {"ok": False, "fehler": "abgebrochen"}
++        if ziel.suffix.lower() != mitnehmen.ENDUNG:
++            ziel = ziel.with_name(ziel.name + mitnehmen.ENDUNG)
++        return a.sicherung.speichern(ziel, passwort)
++
++    def sicherung_waehlen(self) -> dict:
++        a = self._app
++        if not a.e.einzelplatz:
++            return {"ok": False, "fehler": "unbekannt"}
++        datei = a.datei_waehlen(speichern=False)
++        if not datei:
++            return {"ok": False, "fehler": "abgebrochen"}
++        a.sicherung.gewaehlt = datei
++        return {"ok": True, "datei": datei.name}
++
++    def sicherung_zurueckspielen(self, passwort: str) -> dict:
++        a = self._app
++        if not a.e.einzelplatz or not passwort:
++            return {"ok": False, "fehler": "passwort"}
++        return a.sicherung.zurueckspielen(passwort)
++
++    def hilfe_vorschau(self) -> dict:
++        """Genau dieser Text wird gespeichert – nichts anderes."""
++        self._app.hilfe = mitnehmen.hilfe_text(self._app)
++        return {"text": self._app.hilfe}
++
++    def hilfe_speichern(self) -> dict:
++        a = self._app
++        if not a.hilfe:
++            return {"ok": False, "fehler": "keine_vorschau"}
++        ziel = a.datei_waehlen(speichern=True, name=f"taleward-hilfe-{time.strftime('%Y-%m-%d')}.txt", text=True)
++        if not ziel:
++            return {"ok": False, "fehler": "abgebrochen"}
++        try:
++            ziel.write_text(a.hilfe, encoding="utf-8")
++        except OSError:
++            return {"ok": False, "fehler": "nicht_gespeichert"}
++        a.hilfe = ""
++        return {"ok": True, "datei": ziel.name}
++
+     def hardware_pruefen(self) -> dict:
+         self._app.hardware = hardware.bericht()
+@@ -210,4 +278,5 @@ class Api:
+ 
+     def entkoppeln(self) -> None:
++        """Mit einem (neuen) Kopplungscode wieder verbinden. Die Betriebsart wechselt „Betriebsart wechseln“."""
+         a = self._app
+         if a.e.einzelplatz:
+@@ -215,5 +284,5 @@ class Api:
+         a.dienst.stoppen()
+         a.e.token = ""
+-        a.e.betrieb = ""  # zurück zur Wahl „Alles auf diesem PC“ / „Mit einem Server verbinden“
++        a.e.betrieb = "verbunden"
+         a.e.speichern()
+ 
+@@ -279,4 +348,6 @@ class WorkerApp:
+         self._server: einzelplatz.ServerDienst | None = None  # erst bei „Alles auf diesem PC“
+         self._update: serverupdate.ServerUpdate | None = None
++        self.sicherung = mitnehmen.Sicherung(self)
++        self.hilfe = ""  # zuletzt gezeigte Hilfe-Datei (genau diese wird gespeichert)
+         self.app_fenster = None
+         self.netz: dict | None = None  # Firewall und Netzprofil (Einzelplatz, Windows) – langsam, darum zwischengespeichert
+@@ -326,4 +397,50 @@ class WorkerApp:
+         self.server.starten(startschluessel=not self.e.konto_angelegt)
+ 
++    def betrieb_wechseln(self, ziel: str) -> None:
++        """Anhalten, was zur bisherigen Betriebsart gehört, und in die neue wechseln. Zu „Mit einem Server
++        verbinden“ geht es mit Adresse und Kopplungscode weiter; zu „Alles auf diesem PC“ startet Taleward hier
++        (beim ersten Mal mit Konto anlegen, sonst mit den Kampagnen von vorher)."""
++        self.dienst.stoppen()
++        if self._server is not None:
++            self._server.stoppen()
++        self.e.token, self.e.betrieb = "", ziel
++        if ziel == "verbunden":
++            self.e.server = ""
++        self.e.speichern()
++        self.server_version = self.server_name = None
++        self.dienst.protokoll.schreiben("Betriebsart gewechselt: " + (
++            "Alles auf diesem PC" if ziel == "einzelplatz" else "Mit einem Server verbinden"))
++        if ziel == "einzelplatz":
++            self.hardware = hardware.bericht()
++            if self.motor_passt_einzelplatz():
++                self.taleward_starten()
++            elif motor.installiert():
++                self.installieren(self.e.testmodus)  # KI-Paket zu alt für „Alles auf diesem PC“ → neueste Fassung
++        self.tray_aktualisieren()
++
++    def motor_passt_einzelplatz(self) -> bool:
++        if os.environ.get("TALEWARD_MOTOR"):
++            return True
++        fassung = str((motor.installiert() or {}).get("fassung") or "")
++        return bool(fassung) and not selbstupdate.neuer(einzelplatz.MINDEST_SERVER, fassung)
++
++    def datei_waehlen(self, speichern: bool, name: str = "", text: bool = False):
++        """Dateidialog von Windows (bzw. des Systems). Liefert den Pfad oder None (abgebrochen)."""
++        import webview
++
++        arten = ("Textdatei (*.txt)",) if text else ("Taleward-Sicherung (*.taleward)",)
++        dialog = getattr(webview, "FileDialog", None)
++        typ = (dialog.SAVE if speichern else dialog.OPEN) if dialog else (
++            webview.SAVE_DIALOG if speichern else webview.OPEN_DIALOG)
++        try:
++            ordner = str(Path.home() / "Documents") if (Path.home() / "Documents").is_dir() else str(Path.home())
++            auswahl = self.fenster.create_file_dialog(typ, directory=ordner, save_filename=name, file_types=arten)
++        except Exception as e:  # noqa: BLE001 – kein Dialog möglich
++            log.warning("Dateidialog nicht möglich: %s", e)
++            return None
++        if not auswahl:
++            return None
++        return Path(auswahl if isinstance(auswahl, str) else auswahl[0])
++
+     def netz_pruefen(self) -> None:
+         if self.e.einzelplatz:
+@@ -467,4 +584,6 @@ class WorkerApp:
+         if self.e.einzelplatz:
+             fassung = str((motor.installiert() or {}).get("fassung") or "") if not testmodus else ""
++            if fassung and selbstupdate.neuer(einzelplatz.MINDEST_SERVER, fassung):
++                fassung = ""  # z. B. nach dem Wechsel von „Mit einem Server verbinden“: zu alt → neueste
+         else:
+             fassung = self.server_version or ""
+diff --git a/taleward_worker/serverupdate.py b/taleward_worker/serverupdate.py
+index ee88c51..c553f3f 100644
+--- a/taleward_worker/serverupdate.py
++++ b/taleward_worker/serverupdate.py
+@@ -241,5 +241,6 @@ class ServerUpdate:
+ 
+     # ------------------------------------------------------------------ Sicherung (mit der jeweils installierten Fassung)
+-    def cli(self, *argumente: str) -> subprocess.CompletedProcess:
++    def cli(self, *argumente: str, eingabe: str | None = None) -> subprocess.CompletedProcess:
++        """`eingabe` (z. B. ein Passwort) geht über die Standardeingabe, nie in die Befehlszeile."""
+         py = os.environ.get("TALEWARD_MOTOR") or str(pfade.motor_python())
+         umgebung = self.app.server.umgebung()
+@@ -247,4 +248,5 @@ class ServerUpdate:
+         return subprocess.run([py, "-m", "app.cli", *argumente], capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=1800, env=umgebung, cwd=pfade.basis(),
++                              input=eingabe if eingabe is not None else "",
+                               **({"creationflags": 0x08000000} if os.name == "nt" else {}))
+ 
+diff --git a/tests/test_betriebsart.py b/tests/test_betriebsart.py
+new file mode 100644
+index 0000000..41a90e9
+--- /dev/null
++++ b/tests/test_betriebsart.py
+@@ -0,0 +1,98 @@
++"""Betriebsart wechseln, in beide Richtungen (ab Worker 0.3.4)."""
++import time
++from types import SimpleNamespace
++
++
++def _warten(bedingung, frist=5.0):
++    ende = time.monotonic() + frist
++    while time.monotonic() < ende:
++        if bedingung():
++            return True
++        time.sleep(0.02)
++    return bedingung()
++
++
++def _app(monkeypatch, **einstellungen):
++    from taleward_worker import hardware
++    from taleward_worker.oberflaeche import Api, WorkerApp
++
++    monkeypatch.setattr(hardware, "bericht", lambda: {"grafikkarte": None})
++    app = WorkerApp()
++    for k, v in einstellungen.items():
++        setattr(app.e, k, v)
++    app.e.speichern()
++    return app, Api(app)
++
++
++def test_wechsel_von_server_zu_alles_auf_diesem_pc(monkeypatch):
++    from taleward_worker import motor
++
++    app, api = _app(monkeypatch, betrieb="verbunden", server="https://verein.invalid", token="wk.1.x")
++    gestoppt, installiert, gestartet = [], [], []
++    monkeypatch.setattr(app.dienst, "stoppen", lambda *a, **k: gestoppt.append(1))
++    monkeypatch.setattr(app, "installieren", lambda testmodus: installiert.append(testmodus))
++    monkeypatch.setattr(app, "taleward_starten", lambda: gestartet.append(1))
++    monkeypatch.setattr(motor, "installiert", lambda: {"fassung": "0.4.93"})  # für den Verein, zu alt
++    assert api.betrieb_wechseln("verbunden") == {"ok": False, "fehler": "unbekannt"}  # ist schon so
++    assert api.betrieb_wechseln("einzelplatz") == {"ok": True}
++    assert _warten(lambda: app.e.einzelplatz)
++    assert _warten(lambda: installiert == [False])
++    assert gestoppt and not app.e.token and not gestartet
++    # KI-Paket neu genug → Taleward startet gleich
++    monkeypatch.setattr(motor, "installiert", lambda: {"fassung": "0.4.100"})
++    app.e.betrieb = "verbunden"
++    app.betrieb_wechseln("einzelplatz")
++    assert gestartet == [1]
++
++
++def test_wechsel_zurueck_zum_server_behaelt_die_kampagnen(monkeypatch):
++    from taleward_worker import pfade
++
++    app, api = _app(monkeypatch, betrieb="einzelplatz", server="http://127.0.0.1:8000", token="wk.1.x",
++                    konto_angelegt=True, anmeldename="anna")
++    (pfade.einzelplatz_daten() / "chronik.db").write_text("kampagnen")
++    gestoppt = []
++    monkeypatch.setattr(app.dienst, "stoppen", lambda *a, **k: gestoppt.append("worker"))
++    monkeypatch.setattr(app.server, "stoppen", lambda *a, **k: gestoppt.append("taleward"))
++    app.betrieb_wechseln("verbunden")
++    assert gestoppt == ["worker", "taleward"]
++    assert (app.e.art, app.e.server, app.e.token, app.e.gekoppelt) == ("verbunden", "", "", False)
++    assert app.e.konto_angelegt  # beim Zurückwechseln ist alles wieder da
++    assert (pfade.einzelplatz_daten() / "chronik.db").read_text() == "kampagnen"
++
++
++def test_kein_wechsel_mitten_in_der_arbeit(monkeypatch):
++    app, api = _app(monkeypatch, betrieb="verbunden", server="https://verein.invalid", token="wk.1.x")
++    app.dienst.zustand = {"art": "arbeitet"}
++    assert api.betrieb_wechseln("einzelplatz") == {"ok": False, "fehler": "arbeitet"}
++    app.dienst.zustand = {"art": "warte"}
++    app.installation = SimpleNamespace(phase="pakete")
++    assert api.betrieb_wechseln("einzelplatz") == {"ok": False, "fehler": "beschaeftigt"}
++    assert app.e.art == "verbunden"
++
++
++def test_neu_koppeln_bleibt_beim_server(monkeypatch):
++    app, api = _app(monkeypatch, betrieb="verbunden", server="https://verein.invalid", token="wk.1.x")
++    monkeypatch.setattr(app.dienst, "stoppen", lambda *a, **k: None)
++    api.entkoppeln()
++    assert app.e.art == "verbunden" and not app.e.gekoppelt and app.e.server == "https://verein.invalid"
++
++
++def test_alles_auf_diesem_pc_installiert_nie_eine_zu_alte_fassung(monkeypatch):
++    from taleward_worker import motor
++
++    app, api = _app(monkeypatch, betrieb="einzelplatz")
++    monkeypatch.setattr(motor, "installiert", lambda: {"fassung": "0.4.93"})
++    monkeypatch.setattr(motor, "platz_fehlt_gb", lambda *a: 0)
++    erzeugt = []
++
++    class Inst:
++        def __init__(self, fassung, **k):
++            erzeugt.append((fassung, k.get("neueste")))
++            self.phase = "start"
++
++        def starten(self):
++            pass
++    monkeypatch.setattr(motor, "Installation", Inst)
++    app.installieren(False)
++    assert erzeugt == [("", True)]
+-- 
+2.43.0
+
