@@ -250,7 +250,7 @@ class Dienst:
 
         if self.e.testmodus:
             return AUS
-        adresse = self.ollama.adresse(self.e.recaps_lokal)
+        adresse = self.ollama.adresse(self.e.recaps_lokal, nur_geschlossen=self.e.einzelplatz)
         if adresse != self.ollama.eigene_adresse:
             self.ollama.stoppen()  # abgeschaltet oder ein anderes Ollama übernimmt
         return adresse

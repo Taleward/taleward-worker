@@ -55,6 +55,30 @@ def antwortet(url: str, zeit: float = 2.0) -> bool:
         return False
 
 
+def eigene_netzadressen() -> list[str]:
+    """IPv4-Adressen dieses PCs im Heimnetz (ohne 127.x)."""
+    import socket
+
+    adressen = set()
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))  # es geht nichts hinaus
+            adressen.add(s.getsockname()[0])
+    except OSError:
+        pass
+    try:
+        for e in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            adressen.add(e[4][0])
+    except OSError:
+        pass
+    return sorted(a for a in adressen if not a.startswith("127."))
+
+
+def im_netz_offen(port: int = 11434) -> bool:
+    """Antwortet ein Ollama auf diesem PC auch unter der Heimnetz-Adresse (also für andere Geräte)?"""
+    return any(antwortet(f"http://{a}:{port}", 0.5) for a in eigene_netzadressen())
+
+
 def programm() -> Path | None:
     name = "ollama.exe" if sys.platform == "win32" else "ollama"
     wurzel = ordner()
@@ -192,11 +216,13 @@ class OllamaDienst:
     def laeuft(self) -> bool:
         return self._prozess is not None and self._prozess.poll() is None
 
-    def adresse(self, an: bool) -> str:
-        """Für WORKER_LLM_URL: eigenes/fremdes Ollama oder AUS. Startet das eigene bei Bedarf."""
+    def adresse(self, an: bool, nur_geschlossen: bool = False) -> str:
+        """Für WORKER_LLM_URL: eigenes/fremdes Ollama oder AUS. Startet das eigene bei Bedarf.
+        `nur_geschlossen` (Alles auf diesem PC): ein fremdes Ollama nur, wenn es nicht auch im Netz antwortet –
+        Ollama hat keine Anmeldung, ein offenes nutzen wir nicht still mit."""
         if not an:
             return AUS
-        if antwortet(FREMDE_ADRESSE):
+        if antwortet(FREMDE_ADRESSE) and not (nur_geschlossen and im_netz_offen()):
             return FREMDE_ADRESSE
         if not self.laeuft() and antwortet(self.eigene_adresse):
             # Läuft schon – von einer abgestürzten App übrig geblieben oder von einem zweiten Benutzer. Ein zweiter
