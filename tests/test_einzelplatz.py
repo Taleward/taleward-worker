@@ -226,3 +226,36 @@ def test_einzelplatz_braucht_neue_serverfassung(monkeypatch):
     inst = motor.Installation("", neueste=True)
     inst._lauf()
     assert inst.phase == "fehler" and inst.fehler == "einzelplatz_zu_alt"
+
+
+def test_oberflaeche_wahl_und_konto(monkeypatch):
+    from taleward_worker import einzelplatz, pfade
+    from taleward_worker.oberflaeche import Api, WorkerApp
+
+    app = WorkerApp()
+    api = Api(app)
+    assert api.zustand()["taleward"] is None
+    assert api.betrieb_waehlen("irgendwas") == {"ok": False}
+    assert api.betrieb_waehlen("einzelplatz") == {"ok": True} and app.e.einzelplatz
+    assert api.zustand()["taleward"]["zustand"]["art"] == "gestoppt"
+    assert api.konto_anlegen("", "Lindwurm-Kessel-7", "Lindwurm-Kessel-7")["fehler"] == "name_missing"
+    assert api.konto_anlegen("Anna", "kurz", "kurz")["fehler"] == "password_too_short"
+    assert api.konto_anlegen("Anna", "Lindwurm-Kessel-7", "anders-1234")["fehler"] == "passwoerter_ungleich"
+    assert api.konto_anlegen("Anna", "Lindwurm-Kessel-7", "Lindwurm-Kessel-7")["fehler"] == "startet_noch"
+    # Server bereit, Konto gelingt → gemerkt, ohne Passwort zu speichern
+    app.server.bereit.set()
+    monkeypatch.setattr(app.server, "konto_anlegen", lambda n, p, b=None: {"ok": True, "anmeldename": "anna"})
+    assert api.konto_anlegen("Anna", "Lindwurm-Kessel-7", "Lindwurm-Kessel-7") == {"ok": True, "anmeldename": "anna"}
+    assert app.e.konto_angelegt and app.e.anmeldename == "anna"
+    assert "Lindwurm" not in pfade.einstellungen().read_text(encoding="utf-8")
+    # Worker koppelt sich mit dem Schlüssel aus der Datei
+    gestartet = []
+    monkeypatch.setattr(app.dienst, "starten", lambda: gestartet.append(1))
+    monkeypatch.setattr(app, "fassung_abfragen", lambda: None)
+    pfade.worker_schluessel().write_text("wk.abc.def\n", encoding="utf-8")
+    app._worker_koppeln()
+    assert (app.e.server, app.e.token, gestartet) == (einzelplatz.ADRESSE, "wk.abc.def", [1])
+    # Neu koppeln gibt es im Einzelplatz nicht
+    api.entkoppeln()
+    assert app.e.token == "wk.abc.def"
+    assert api.betrieb_waehlen("verbunden") == {"ok": False}

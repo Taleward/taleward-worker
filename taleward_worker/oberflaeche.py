@@ -10,7 +10,8 @@ import threading
 import time
 import webbrowser
 
-from taleward_worker import VERSION, autostart, hardware, motor, ollama, pfade, selbstupdate, server
+from taleward_worker import (VERSION, autostart, einzelplatz, fenster, hardware, motor, netzfreigabe, ollama, pfade,
+                             selbstupdate, server)
 from taleward_worker.dienst import Dienst
 from taleward_worker.einstellungen import Einstellungen
 
@@ -37,7 +38,60 @@ class Api:
             "appUpdate": a.app_update.stand() if a.app_update else None, "trayVorhanden": a.tray is not None,
             "entwicklung": bool(os.environ.get("TALEWARD_MOTOR")),
             "ollama": a.ollama_stand(),
+            "taleward": {**a.server.fuer_oberflaeche(), "netz": a.netz} if a.e.einzelplatz else None,
         }
+
+    # -- Alles auf diesem PC
+    def betrieb_waehlen(self, art: str) -> dict:
+        a = self._app
+        if art not in ("einzelplatz", "verbunden") or a.e.gekoppelt or a.e.art:
+            return {"ok": False}
+        a.e.betrieb = art
+        a.e.speichern()
+        return {"ok": True}
+
+    def konto_anlegen(self, name: str, passwort: str, passwort2: str) -> dict:
+        a = self._app
+        name = " ".join(str(name or "").split())[:128]
+        if not a.e.einzelplatz or a.e.konto_angelegt:
+            return {"ok": False, "fehler": "unbekannt"}
+        if not name:
+            return {"ok": False, "fehler": "name_missing"}
+        if len(passwort or "") < einzelplatz.MIN_PASSWORT:
+            return {"ok": False, "fehler": "password_too_short"}
+        if passwort != passwort2:
+            return {"ok": False, "fehler": "passwoerter_ungleich"}
+        if not a.server.bereit.is_set():
+            return {"ok": False, "fehler": "startet_noch"}
+        r = a.server.konto_anlegen(name, passwort)
+        if r.get("ok") or r.get("fehler") == "schon_eingerichtet":
+            a.e.konto_angelegt = True
+            a.e.anmeldename = r.get("anmeldename") or a.e.anmeldename
+            a.e.speichern()
+            return {"ok": True, "anmeldename": a.e.anmeldename}
+        if r.get("fehler") == "schluessel_abgelaufen":
+            a.server_neu_starten()  # neuer Schlüssel – der alte gilt nur 15 Minuten
+        return r
+
+    def taleward_oeffnen(self) -> dict:
+        return {"ok": self._app.app_fenster_oeffnen()}
+
+    def im_browser_oeffnen(self) -> None:
+        if self._app.server.bereit.is_set():
+            webbrowser.open(einzelplatz.APP_ADRESSE)
+
+    def netz_freigeben(self) -> dict:
+        """Firewall-Regel anlegen (Windows fragt nach Administratorrechten)."""
+        ok = netzfreigabe.anlegen()
+        self._app.netz_pruefen()
+        return {"ok": ok}
+
+    def netz_pruefen(self) -> dict:
+        self._app.netz_pruefen()
+        return self._app.netz or {}
+
+    def taleward_neu_starten(self) -> None:
+        threading.Thread(target=self._app.server_neu_starten, daemon=True).start()
 
     def hardware_pruefen(self) -> dict:
         self._app.hardware = hardware.bericht()
@@ -149,8 +203,11 @@ class Api:
 
     def entkoppeln(self) -> None:
         a = self._app
+        if a.e.einzelplatz:
+            return  # der Worker gehört zu Taleward auf diesem PC
         a.dienst.stoppen()
         a.e.token = ""
+        a.e.betrieb = ""  # zurück zur Wahl „Alles auf diesem PC“ / „Mit einem Server verbinden“
         a.e.speichern()
 
     def ki_entfernen(self, modelle_auch: bool = True) -> None:
@@ -196,7 +253,9 @@ class Api:
             webbrowser.open(url)
 
     def verwaltung_oeffnen(self) -> None:
-        if self._app.e.server:
+        if self._app.e.einzelplatz:
+            webbrowser.open(einzelplatz.ADRESSE + "/verwaltung")  # nur vom PC selbst erreichbar
+        elif self._app.e.server:
             webbrowser.open(self._app.e.server.rstrip("/") + "/verwaltung/worker")
 
     def fenster_verstecken(self) -> None:
@@ -210,6 +269,10 @@ class WorkerApp:
     def __init__(self, hintergrund: bool = False):
         self.e = Einstellungen.laden()
         self.dienst = Dienst(self.e)
+        self.server = einzelplatz.ServerDienst()
+        self.server.bei_bereit = self._worker_koppeln
+        self.app_fenster = None
+        self.netz: dict | None = None  # Firewall und Netzprofil (Einzelplatz, Windows) – langsam, darum zwischengespeichert
         self.installation: motor.Installation | None = None
         self.ollama_installation: ollama.Installation | None = None
         self._fremd_geprueft: tuple[float, bool] = (0.0, False)
@@ -232,6 +295,76 @@ class WorkerApp:
         except server.ServerFehler as e:
             if e.code == "abgelehnt":
                 self.dienst._setzen("abgelehnt")
+
+    # -- Alles auf diesem PC
+    def taleward_starten(self) -> None:
+        """Server aus dem KI-Paket starten; sobald er antwortet, koppelt sich der Worker (_worker_koppeln)."""
+        if not self.e.einzelplatz or not (motor.installiert() or os.environ.get("TALEWARD_MOTOR")):
+            return
+        self.server.starten(startschluessel=not self.e.konto_angelegt)
+
+    def netz_pruefen(self) -> None:
+        if self.e.einzelplatz:
+            try:
+                self.netz = netzfreigabe.stand()
+            except Exception:  # noqa: BLE001 – Anzeige ist Beiwerk
+                log.debug("Netz nicht prüfbar", exc_info=True)
+
+    def server_neu_starten(self) -> None:
+        self.dienst.stoppen()
+        self.server.stoppen()
+        self.taleward_starten()
+
+    def _worker_koppeln(self) -> None:
+        """Bei jedem Serverstart: frischer Schlüssel aus der Datei, Worker damit (neu) starten."""
+        token = self.server.worker_token()
+        if not token:
+            self.dienst.protokoll.schreiben("Taleward läuft, aber der Schlüssel für den Worker fehlt")
+            return
+        neu = token != self.e.token or self.e.server != einzelplatz.ADRESSE
+        self.e.server, self.e.token, self.e.unsicher = einzelplatz.ADRESSE, token, False
+        self.e.speichern()
+        self.fassung_abfragen()
+        if neu and self.dienst.laeuft():
+            self.dienst.neu_starten()
+        elif not self.dienst.laeuft():
+            self.dienst.starten()
+        self.tray_aktualisieren()
+
+    def _netz_beim_ersten_mal(self) -> None:
+        """Nach dem Installieren, vor dem ersten Start: Firewall-Regel anlegen, damit Windows nicht seine eigene,
+        viel weitere Rückfrage zeigt. Lehnt jemand ab, fragt das Programm nicht wieder von selbst."""
+        if not netzfreigabe.WINDOWS or self.e.firewall_gefragt:
+            return
+        self.e.firewall_gefragt = True
+        self.e.speichern()
+        try:
+            stand = netzfreigabe.stand()
+            if not stand.get("regel"):
+                netzfreigabe.anlegen()
+        except Exception as e:  # noqa: BLE001 – ohne Regel geht es weiter, die Oberfläche bietet „Erlauben“ an
+            self.dienst.protokoll.schreiben(f"Netzwerk-Freigabe nicht möglich: {type(e).__name__}: {e}")
+        self.netz_pruefen()
+
+    def app_fenster_oeffnen(self) -> bool:
+        if not self.server.bereit.is_set():
+            return False
+        if self.app_fenster is not None:
+            try:
+                self.app_fenster.show()
+                self.app_fenster.restore()
+                return True
+            except Exception:  # noqa: BLE001 – Fenster gibt es nicht mehr
+                self.app_fenster = None
+        try:
+            self.app_fenster = fenster.app_fenster(einzelplatz.APP_ADRESSE, self._app_fenster_zu)
+        except Exception as e:  # noqa: BLE001 – dann bleibt der Browser
+            log.warning("Programmfenster nicht möglich: %s", e)
+            webbrowser.open(einzelplatz.APP_ADRESSE)
+        return True
+
+    def _app_fenster_zu(self) -> None:
+        self.app_fenster = None
 
     def motor_passt(self) -> bool:
         inst = motor.installiert()
@@ -290,22 +423,37 @@ class WorkerApp:
         def vor():
             war_aktiv["an"] = self.dienst.laeuft()
             self.dienst.stoppen()
+            if self.e.einzelplatz:
+                self.server.stoppen()  # der Server läuft aus dem KI-Paket, das gleich ersetzt wird
 
         def nach():
             if self.installation and self.installation.phase != "fehler":
                 self.e.motor_fassung = self.installation.fassung
                 self.e.motor_art = "test" if testmodus else "ki"
                 self.e.speichern()
-            if self.e.gekoppelt:
+            if self.e.einzelplatz:
+                self._netz_beim_ersten_mal()
+                self.taleward_starten()
+            elif self.e.gekoppelt:
                 self.dienst.starten()
 
         backend = "cpu" if self.e.geraet == "cpu" else "cuda"
-        self.installation = motor.Installation(self.server_version or "", testmodus=testmodus, backend=backend,
-                                               vor_tausch=vor, nach_tausch=nach)
+        # Alles auf diesem PC: kein Server nennt die Fassung – die neueste freigegebene von GitHub
+        fassung = "" if self.e.einzelplatz else (self.server_version or "")
+        self.installation = motor.Installation(fassung, testmodus=testmodus, backend=backend,
+                                               vor_tausch=vor, nach_tausch=nach, neueste=self.e.einzelplatz)
         self.installation.starten()
 
     def _motor_pruefen(self, erster: bool) -> None:
         """Serverfassung abfragen; passt das KI-Paket nicht mehr, im Hintergrund nachziehen (nur ohne Auftrag)."""
+        if self.e.einzelplatz:
+            # Alles auf diesem PC: Taleward starten, der Worker folgt (Updates kommen in einem eigenen Schritt)
+            laeuft_installation = self.installation and self.installation.phase not in ("fertig", "fehler",
+                                                                                         "abgebrochen")
+            if not laeuft_installation and not self.server.laeuft() and self.server.zustand.get("art") in (
+                    "gestoppt",) and (motor.installiert() or os.environ.get("TALEWARD_MOTOR")):
+                self.taleward_starten()
+            return
         self.fassung_abfragen()
         if not self.e.gekoppelt:
             return
@@ -345,6 +493,7 @@ class WorkerApp:
             try:
                 self._motor_pruefen(erster)
                 self._ollama_pruefen()
+                self.netz_pruefen()
                 if time.time() >= naechste_app_pruefung and self.e.gekoppelt:
                     self.app_update_pruefen()
                     naechste_app_pruefung = time.time() + UPDATE_PRUEFEN_ALLE
@@ -436,6 +585,7 @@ class WorkerApp:
                 inst.abbrechen()  # sonst schreibt uv nach dem Ende der App minutenlang weiter in motor-neu
         self.dienst.stoppen()
         self.dienst.ollama.stoppen()
+        self.server.stoppen()
         if self.tray is not None:
             try:
                 self.tray.stop()
@@ -479,6 +629,8 @@ class WorkerApp:
             return (("Fortsetzen" if de else "Resume") if self.e.pausiert else ("Pausieren" if de else "Pause"))
 
         menue = pystray.Menu(
+            pystray.MenuItem("Taleward öffnen" if de else "Open Taleward", lambda: self.app_fenster_oeffnen(),
+                             visible=lambda _: self.e.einzelplatz and self.e.konto_angelegt),
             pystray.MenuItem("Öffnen" if de else "Open", lambda: self.zeigen(), default=True),
             pystray.MenuItem(pause_text, lambda: (self.dienst.pausieren(not self.e.pausiert),
                                                   self.tray_aktualisieren())),
@@ -534,9 +686,15 @@ class WorkerApp:
         self.fenster.events.closing += self._beim_schliessen
         threading.Thread(target=self._hintergrund_pflege, daemon=True, name="pflege").start()
         threading.Thread(target=self._tray_nachfuehren, daemon=True, name="tray").start()
-        webview.start(debug=bool(os.environ.get("TALEWARD_DEBUG")), private_mode=True)
+        # Dauerhafter Speicher im Benutzerordner: Die App im Programmfenster merkt sich ihre Anmeldung und sichert
+        # Aufnahmen bis zum Hochladen. Downloads (Umzugsdatei, „Kapitel teilen“) mit Speichern-Dialog.
+        webview.settings["ALLOW_DOWNLOADS"] = True
+        webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
+        webview.start(debug=bool(os.environ.get("TALEWARD_DEBUG")), private_mode=False,
+                      storage_path=str(pfade.fenster_speicher()))
         self._beendet.set()
         self.dienst.stoppen()
+        self.server.stoppen()
         if self.tray is not None:
             try:
                 self.tray.stop()

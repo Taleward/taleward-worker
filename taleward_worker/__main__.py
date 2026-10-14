@@ -11,7 +11,7 @@ def main() -> int:
     argumente = sys.argv[1:]
     if "--pruefen" in argumente:
         # Für den Paketbau: alles laden, nichts anzeigen
-        from taleward_worker import autostart, dienst, einzeln, hardware, motor, oberflaeche, pfade, prozesse, server  # noqa: F401
+        from taleward_worker import autostart, dienst, einzeln, einzelplatz, fenster, hardware, motor, netzfreigabe, oberflaeche, pfade, prozesse, server  # noqa: F401
         import webview  # noqa: F401
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey  # noqa: F401 – Freigabe
 

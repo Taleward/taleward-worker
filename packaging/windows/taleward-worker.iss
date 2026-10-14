@@ -183,6 +183,12 @@ begin
       nur die aus diesem Ordner beenden, nicht ein fremdes Ollama des Benutzers }
     Befehl := '-NoProfile -ExecutionPolicy Bypass -Command "Get-Process | Where-Object { $_.Path -like ''' + Daten + '\*'' } | Stop-Process -Force"';
     Exec('powershell.exe', Befehl, '', SW_HIDE, ewWaitUntilTerminated, Code);
+    { „Alles auf diesem PC“: Die Netzwerk-Freigabe (Firewall-Regel „Taleward“) hat die App mit Rückfrage angelegt –
+      entfernen braucht wieder Administratorrechte, darum nur, wenn es sie laut Merkdatei gibt }
+    if FileExists(Daten + '\firewall.txt') then
+      ShellExec('runas', 'powershell.exe',
+        '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Remove-NetFirewallRule -DisplayName ''Taleward'' -ErrorAction SilentlyContinue"',
+        '', SW_HIDE, ewWaitUntilTerminated, Code);
   end;
   if CurUninstallStep = usPostUninstall then
   begin

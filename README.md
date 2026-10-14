@@ -48,6 +48,19 @@ nur minimiert.
    Sprachmodelle dazu.
 4. **Fertig:** Autostart, Hintergrundbetrieb und wie viel Grafikspeicher Taleward nutzen darf.
 
+### Alles auf diesem PC (in Erprobung)
+
+Beim ersten Start fragt die App, wie Taleward laufen soll. Mit **Alles auf diesem PC** braucht es keinen eigenen
+Server: Die App lädt das KI-Paket in der neuesten freigegebenen Server-Fassung, startet daraus den Taleward-Server in
+der Betriebsart „Einzelplatz“ (siehe `docs/BETRIEB.md` im Server-Repo) und überwacht ihn. Danach legst du Name und
+Passwort für dein Konto fest; die App öffnet Taleward in einem eigenen Fenster. Handys im selben WLAN treten per
+QR-Code bei.
+
+- Die Daten (Kampagnen, Aufnahmen, Konten) liegen unter `%LOCALAPPDATA%\Taleward\Daten`, getrennt vom Programm.
+- Das Fenster hat keinen Zugriff auf die App selbst, öffnet nur Seiten von Taleward auf diesem PC (alles andere im
+  Browser) und darf nur das Mikrofon nutzen.
+- Die Verbindung im WLAN ist nicht verschlüsselt – gedacht für das eigene WLAN.
+
 ## Was die App kann
 
 - **Passt sich der Hardware an.** Modell, Stapelgröße und Gerät wählt sie nach dem Grafikspeicher:
