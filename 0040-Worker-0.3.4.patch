@@ -1,0 +1,425 @@
+From 8c0d6ab38e9ce970eb725eb9800c050d5d597654 Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Thu, 15 Oct 2026 00:03:20 +0200
+Subject: [PATCH 40/40] Worker 0.3.4
+
+---
+ README.md                     |  13 +++-
+ pyproject.toml                |   2 +-
+ taleward_worker/__init__.py   |   2 +-
+ taleward_worker/ui/app.css    |  11 ++++
+ taleward_worker/ui/app.js     | 117 +++++++++++++++++++++++++++++++++-
+ taleward_worker/ui/index.html |  54 +++++++++++++++-
+ taleward_worker/ui/texte.js   |  86 ++++++++++++++++++++++++-
+ uv.lock                       |   2 +-
+ 8 files changed, 277 insertions(+), 10 deletions(-)
+
+diff --git a/README.md b/README.md
+index 9286d4e..6a82a1d 100644
+--- a/README.md
++++ b/README.md
+@@ -23,5 +23,6 @@ herunterladen und starten. Administratorrechte sind nicht nötig.
+ 
+ Die App liegt unter `%LOCALAPPDATA%\Programs\Taleward Worker`; KI-Paket, Modelle, Einstellungen und Protokoll unter
+-`%LOCALAPPDATA%\Taleward Worker`. Beim Deinstallieren fragt der Installer, ob diese Daten auch weg sollen.
++`%LOCALAPPDATA%\Taleward Worker`. Beim Deinstallieren fragt der Installer, ob diese Daten auch weg sollen, und
++getrennt davon, ob auch die Kampagnen von „Alles auf diesem PC“ gelöscht werden (standardmäßig bleiben sie).
+ 
+ ### Linux
+@@ -61,4 +62,10 @@ QR-Code bei.
+   Browser) und darf nur das Mikrofon nutzen.
+ - Die Verbindung im WLAN ist nicht verschlüsselt – gedacht für das eigene WLAN.
++- **Betriebsart wechseln** (Einstellungen) geht in beide Richtungen; die Kampagnen bleiben auf dem PC.
++- **Sicherung speichern / zurückspielen** (Einstellungen): eine Datei mit allen Kampagnen, mit Passwort verschlüsselt –
++  auch zum Umzug auf einen neuen PC.
++- **Hilfe-Datei erstellen** (Protokoll): Fassungen, System und Protokolle ohne Schlüssel, Passwörter und E-Mail-Adressen;
++  die App zeigt vor dem Speichern genau, was in der Datei steht.
++- Unter Windows liegen die Schlüssel der App mit dem Windows-Datenschutz geschützt (nur für den eigenen Windows-Nutzer).
+ 
+ ## Was die App kann
+@@ -76,5 +83,7 @@ QR-Code bei.
+   Rest bleibt für anderes. Nach jedem Auftrag zeigt die App Dauer und höchsten Grafikspeicher als gemessene Werte.
+ - **Immer passend zum Server:** Das KI-Paket wird in genau der Fassung des Servers installiert (der freigegebene Commit
+-  zum Git-Tag `v<Fassung>` im Server-Repository) und zieht nach einem Server-Update selbst nach.
++  zum Git-Tag `v<Fassung>` im Server-Repository) und zieht nach einem Server-Update selbst nach. Die Pakete kommen mit
++  den Prüfsummen aus `uv.lock` dieses Commits (`--require-hashes`); nur PyTorch selbst (torch, torchaudio,
++  torchvision) kommt in der Variante für die Grafikkarte auf eine feste Version festgelegt, ohne Prüfsumme.
+ - **Updates über den eigenen Server:** Die App fragt nur ihren Taleward-Server nach neuen Fassungen. Unter
+   Windows installiert sie sie still, sobald sie nichts zu tun hat; unter Linux über `uv tool install`. Abschaltbar in
+diff --git a/pyproject.toml b/pyproject.toml
+index 2c23f30..807a14a 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-worker"
+-version = "0.3.3"
++version = "0.3.4"
+ description = "Taleward Worker – verarbeitet Aufnahmen für einen Taleward-Server auf dem eigenen PC mit Grafikkarte"
+ license = "AGPL-3.0-only"
+diff --git a/taleward_worker/__init__.py b/taleward_worker/__init__.py
+index c71c59d..14c8a97 100644
+--- a/taleward_worker/__init__.py
++++ b/taleward_worker/__init__.py
+@@ -4,5 +4,5 @@ Die App selbst ist klein. Das KI-Paket (Taleward-Server mit WhisperX, einige GB)
+ passender Fassung zum verbundenen Server und startet es als Unterprozess („chronik worker --app“).
+ """
+-VERSION = "0.3.3"
++VERSION = "0.3.4"
+ REPO = "Taleward/taleward-server"        # Server-Code = KI-Paket (engine-requirements.txt, Tags v…)
+ APP_REPO = "Taleward/taleward-worker"   # diese App
+diff --git a/taleward_worker/ui/app.css b/taleward_worker/ui/app.css
+index 4531392..845fa0b 100644
+--- a/taleward_worker/ui/app.css
++++ b/taleward_worker/ui/app.css
+@@ -195,2 +195,13 @@ main { flex:1; overflow:auto; padding:22px 20px 28px; }
+ .wahl:hover { border-color:var(--line-strong); }
+ .wahl:focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }
++
++/* Rückfragen (Betriebsart, Sicherung, Hilfe-Datei) */
++.dialog { border:none; border-radius:var(--radius-md); background:var(--paper-raised); color:var(--ink); padding:20px;
++  width:min(540px, calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow:auto; box-shadow:var(--shadow-card); }
++.dialog::backdrop { background:rgba(12,21,24,.55); }
++.dialog .knopfreihe { margin-top:8px; }
++.dialog textarea { width:100%; min-height:260px; resize:vertical; font:12px/18px ui-monospace, "Cascadia Mono", Consolas, monospace;
++  color:var(--ink); background:var(--paper); border:1.5px solid var(--line-strong); border-radius:var(--radius-sm);
++  padding:8px 10px; white-space:pre; }
++.dialog textarea:focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }
++.dialog .zeile { margin-bottom:14px; }
+diff --git a/taleward_worker/ui/app.js b/taleward_worker/ui/app.js
+index 90e3888..1156435 100644
+--- a/taleward_worker/ui/app.js
++++ b/taleward_worker/ui/app.js
+@@ -96,5 +96,5 @@
+     });
+     $$("[data-seite]").forEach((el) => { el.hidden = Number(el.dataset.seite) !== nr; });
+-    if (nr === 5) kontoZeigen();
++    if (nr === 5) { kontoZeigen(); sicherungZeigen(); }
+     if (nr === 4) {
+       $("#fertig-text").textContent = einzelplatz() ? t("fertig_text_einzelplatz", { name: S.einstellungen.anmeldename || "–" })
+@@ -383,4 +383,8 @@
+     $("#fuss-version").textContent = "Taleward " + S.version;
+     $("#neu-koppeln").hidden = einzelplatz();
++    $("#betrieb-jetzt").textContent = einzelplatz() ? t("betrieb_jetzt_einzelplatz")
++      : t("betrieb_jetzt_verbunden", { server: serverName() });
++    $("#sicherung-karte").hidden = !einzelplatz();
++    sicherungZeigen();
+     const k = S.hardware && S.hardware.grafikkarte;
+     $("#zeile-prozessor").hidden = !(k && S.hardware.grafikkarteNutzbar) || S.einstellungen.testmodus;
+@@ -391,4 +395,93 @@
+   }
+ 
++  const serverName = () => (S && (S.serverName || S.einstellungen.server)) || t("dem Server");
++
++  // ------------------------------------------------------------ Sicherung
++  function sicherungText() {
++    const s = S && S.taleward && S.taleward.sicherung;
++    if (!s || !s.phase) return null;
++    if (s.phase === "speichern") return ["", t("sich_laeuft_speichern")];
++    if (s.phase === "zurueckspielen") return ["", t("sich_laeuft_zurueck")];
++    if (s.phase === "fertig") return ["", t(s.art === "speichern" ? "sich_fertig_speichern" : "sich_fertig_zurueck", { datei: s.datei })];
++    return ["meldung--fehler", t("sich_f_" + s.fehler) !== "sich_f_" + s.fehler ? t("sich_f_" + s.fehler) : t("sich_f_unbekannt")];
++  }
++  let sicherungZuletzt = "";
++  function sicherungZeigen() {
++    const x = sicherungText();
++    const s = S.taleward && S.taleward.sicherung;
++    const kennung = s ? s.phase + "|" + s.art + "|" + s.datei : "";
++    if (kennung !== sicherungZuletzt && sicherungZuletzt && s && ["fertig", "fehler"].includes(s.phase)) toast(x[1]);
++    sicherungZuletzt = kennung;
++    ["#sicherung-stand", "#konto-sicherung-stand"].forEach((id) => {
++      const el = $(id);
++      el.hidden = !x;
++      if (x) { el.className = "meldung " + x[0]; el.textContent = x[1]; }
++    });
++    const laeuft = !!(S.taleward && S.taleward.sicherung && ["speichern", "zurueckspielen"].includes(S.taleward.sicherung.phase));
++    ["#sicherung-speichern", "#sicherung-zurueck", "#konto-sicherung"].forEach((id) => { $(id).disabled = laeuft; });
++  }
++
++  // ------------------------------------------------------------ Rückfragen
++  let dialogArt = null;
++  function dialogOeffnen(art, titel, okText, okStil) {
++    dialogArt = art;
++    $("#dialog-titel").textContent = titel;
++    $$("[data-dialog]").forEach((el) => { el.hidden = el.dataset.dialog !== art; });
++    $("#dialog-fehler").hidden = true;
++    const ok = $("#dialog-ok");
++    ok.textContent = okText; ok.className = "tw-btn tw-btn--" + (okStil || "primary"); ok.disabled = false;
++    const d = $("#dialog");
++    if (!d.open) d.showModal();
++    const erstes = d.querySelector("[data-dialog=\"" + art + "\"] input, [data-dialog=\"" + art + "\"] textarea");
++    (erstes || ok).focus();
++  }
++  function dialogFehler(text) { const f = $("#dialog-fehler"); f.textContent = text; f.hidden = false; }
++  function dialogZu() { const d = $("#dialog"); if (d.open) d.close(); }
++  function feldfehler(praefix, code) {
++    return t(praefix + code) !== praefix + code ? t(praefix + code) : t(praefix + "unbekannt");
++  }
++  function betriebFragen() {
++    const zu = einzelplatz() ? "verbunden" : "einzelplatz";
++    if (zu === "einzelplatz") {
++      $("#betrieb-frage").textContent = S.einstellungen.gekoppelt ? t("betrieb_zu_einzelplatz", { server: serverName() }) : t("betrieb_zu_einzelplatz_ohne");
++      $("#betrieb-folge").textContent = S.einstellungen.gekoppelt ? t("betrieb_zu_einzelplatz_folge", { server: serverName() }) : "";
++    } else {
++      $("#betrieb-frage").textContent = t("betrieb_zu_verbunden");
++      $("#betrieb-folge").textContent = t("betrieb_zu_verbunden_folge");
++    }
++    dialogOeffnen("betrieb", t(zu === "einzelplatz" ? "betrieb_titel_einzelplatz" : "betrieb_titel_verbunden"), t("Wechseln"));
++    $("#dialog-ok").dataset.ziel = zu;
++  }
++  function zurueckFragen() {
++    const s = S.taleward && S.taleward.sicherung;
++    $("#zurueck-datei").textContent = (s && s.gewaehlt) || t("noch_keine_datei");
++    dialogOeffnen("zurueck", t("Sicherung zurückspielen"), t("Zurückspielen"));
++  }
++  async function dialogBestaetigen() {
++    const ok = $("#dialog-ok");
++    if (ok.disabled) return;
++    ok.disabled = true;
++    try {
++      if (dialogArt === "betrieb") {
++        const r = await api.betrieb_wechseln(ok.dataset.ziel);
++        if (!r.ok) return dialogFehler(feldfehler("betrieb_f_", r.fehler));
++        dialogZu(); fertigZeigen = false; schritt = null; reiter = "status";
++        setTimeout(neuLaden, 300);
++      } else if (dialogArt === "speichern") {
++        const r = await api.sicherung_speichern($("#sich-passwort").value, $("#sich-passwort2").value);
++        if (!r.ok) { if (r.fehler !== "abgebrochen") dialogFehler(feldfehler("sich_f_", r.fehler)); return; }
++        dialogZu(); neuLaden();
++      } else if (dialogArt === "zurueck") {
++        const r = await api.sicherung_zurueckspielen($("#zurueck-passwort").value);
++        if (!r.ok) return dialogFehler(feldfehler("sich_f_", r.fehler));
++        dialogZu(); neuLaden();
++      } else if (dialogArt === "hilfe") {
++        const r = await api.hilfe_speichern();
++        if (!r.ok) { if (r.fehler !== "abgebrochen") dialogFehler(t("hilfe_f")); return; }
++        dialogZu(); toast(t("hilfe_gespeichert", { datei: r.datei }));
++      }
++    } finally { ok.disabled = false; }
++  }
++
+   function ollamaZeigen() {
+     const o = S.ollama || {};
+@@ -544,8 +637,28 @@
+     $("#verwaltung").onclick = () => api.verwaltung_oeffnen();
+     $("#ollama-entfernen").onclick = async () => { if (confirm(t("bestaetigen_ollama"))) { await api.ollama_entfernen(); speicherLaden(); neuLaden(); } };
+-    $("#neu-koppeln").onclick = async () => { if (confirm(t("bestaetigen_koppeln"))) { await api.entkoppeln(); reiter = "status"; neuLaden(); } };
++    $("#neu-koppeln").onclick = async () => { if (confirm(t("bestaetigen_koppeln", { server: serverName() }))) { await api.entkoppeln(); reiter = "status"; neuLaden(); } };
+     $("#neu-installieren").onclick = async () => { await api.installieren(!!S.einstellungen.testmodus); reiter = "status"; zeigeReiter("status"); neuLaden(); };
+     $("#entfernen").onclick = async () => { if (confirm(t("bestaetigen_entfernen"))) { await api.ki_entfernen(true); schritt = 2; reiter = "status"; neuLaden(); } };
+     $("#beenden").onclick = () => api.beenden();
++    $("#betrieb-wechseln").onclick = betriebFragen;
++    $("#sicherung-speichern").onclick = () => dialogOeffnen("speichern", t("Sicherung speichern"), t("Speichern …"));
++    $("#sicherung-zurueck").onclick = zurueckFragen;
++    $("#konto-sicherung").onclick = zurueckFragen;
++    $("#zurueck-waehlen").onclick = async () => {
++      const r = await api.sicherung_waehlen();
++      if (r.ok) $("#zurueck-datei").textContent = r.datei;
++    };
++    $("#hilfe-erstellen").onclick = async () => {
++      const r = await api.hilfe_vorschau();
++      $("#hilfe-vorschau").value = r.text;
++      dialogOeffnen("hilfe", t("Hilfe-Datei"), t("Speichern …"));
++    };
++    $("#dialog-ok").onclick = dialogBestaetigen;
++    $("#dialog-abbrechen").onclick = dialogZu;
++    $("#dialog").addEventListener("close", () => {
++      ["#sich-passwort", "#sich-passwort2", "#zurueck-passwort"].forEach((id) => { $(id).value = ""; });
++      $("#hilfe-vorschau").value = ""; dialogArt = null;
++    });
++    $$("#dialog input").forEach((el) => el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); dialogBestaetigen(); } }));
+     $("#log-kopieren").onclick = () => {
+       const text = $("#log").textContent;
+diff --git a/taleward_worker/ui/index.html b/taleward_worker/ui/index.html
+index 0be68ac..3bdf116 100644
+--- a/taleward_worker/ui/index.html
++++ b/taleward_worker/ui/index.html
+@@ -53,6 +53,10 @@
+       <div class="meldung meldung--fehler" id="konto-fehler" hidden></div>
+       <p class="hilfe" id="konto-wartet" data-t="taleward_startet_noch" hidden></p>
+-      <div class="knopfreihe knopfreihe--ende"><button class="tw-btn tw-btn--primary" id="konto-anlegen" data-t="Konto anlegen"></button></div>
++      <div class="meldung" id="konto-sicherung-stand" role="status" hidden></div>
++      <div class="knopfreihe knopfreihe--ende">
++        <button class="tw-btn tw-btn--quiet" id="konto-sicherung" data-t="Sicherung zurückspielen"></button>
++        <button class="tw-btn tw-btn--primary" id="konto-anlegen" data-t="Konto anlegen"></button></div>
+     </div>
++    <p class="hilfe" data-t="konto_sicherung_hilfe"></p>
+   </div>
+ 
+@@ -219,4 +223,18 @@
+       <button class="tw-btn tw-btn--secondary" id="ollama-entfernen" data-t="ollama_entfernen" hidden></button></div>
+   </div>
++  <div class="karte" id="sicherung-karte" hidden>
++    <h2 data-t="Sicherung"></h2>
++    <p class="leise" data-t="sicherung_text"></p>
++    <div class="meldung" id="sicherung-stand" role="status" hidden></div>
++    <div class="knopfreihe">
++      <button class="tw-btn tw-btn--secondary" id="sicherung-speichern" data-t="Sicherung speichern"></button>
++      <button class="tw-btn tw-btn--secondary" id="sicherung-zurueck" data-t="Sicherung zurückspielen"></button>
++    </div>
++  </div>
++  <div class="karte">
++    <h2 data-t="Betriebsart"></h2>
++    <p class="leise" id="betrieb-jetzt"></p>
++    <div class="knopfreihe"><button class="tw-btn tw-btn--secondary" id="betrieb-wechseln" data-t="Betriebsart wechseln"></button></div>
++  </div>
+   <div class="karte gefahr">
+     <h2 data-t="Verbindung und KI-Paket"></h2>
+@@ -236,8 +254,42 @@
+   <div class="knopfreihe"><button class="tw-btn tw-btn--secondary" id="log-kopieren" data-t="Kopieren"></button>
+     <button class="tw-btn tw-btn--secondary" id="log-ordner" data-t="Ordner öffnen"></button>
++    <button class="tw-btn tw-btn--secondary" id="hilfe-erstellen" data-t="Hilfe-Datei erstellen"></button>
+     <button class="tw-btn tw-btn--quiet" data-zurueck data-t="Zurück"></button></div>
+ </section>
+ </main>
+ <div class="toast" id="toast" hidden></div>
++
++<!-- ============================================================ Rückfragen -->
++<dialog class="dialog" id="dialog" aria-labelledby="dialog-titel">
++  <h2 id="dialog-titel"></h2>
++  <div data-dialog="betrieb">
++    <p id="betrieb-frage"></p>
++    <p class="leise klein" id="betrieb-folge"></p>
++  </div>
++  <div data-dialog="speichern">
++    <p class="leise" data-t="sicherung_speichern_text"></p>
++    <label class="feld"><span data-t="Passwort für die Sicherung"></span>
++      <input id="sich-passwort" type="password" autocomplete="new-password">
++      <span class="hilfe" data-t="sicherung_passwort_hilfe"></span></label>
++    <label class="feld"><span data-t="Passwort wiederholen"></span>
++      <input id="sich-passwort2" type="password" autocomplete="new-password"></label>
++  </div>
++  <div data-dialog="zurueck">
++    <p class="leise" data-t="sicherung_zurueck_text"></p>
++    <div class="zeile"><div class="zeile__text"><strong data-t="Datei"></strong><span id="zurueck-datei"></span></div>
++      <button class="tw-btn tw-btn--secondary" id="zurueck-waehlen" type="button" data-t="Datei wählen"></button></div>
++    <label class="feld"><span data-t="Passwort der Sicherung"></span>
++      <input id="zurueck-passwort" type="password" autocomplete="off"></label>
++  </div>
++  <div data-dialog="hilfe">
++    <p class="leise klein" data-t="hilfe_text"></p>
++    <textarea id="hilfe-vorschau" readonly spellcheck="false" aria-labelledby="dialog-titel"></textarea>
++  </div>
++  <div class="meldung meldung--fehler" id="dialog-fehler" role="alert" hidden></div>
++  <div class="knopfreihe knopfreihe--ende">
++    <button class="tw-btn tw-btn--quiet" id="dialog-abbrechen" type="button" data-t="Abbrechen"></button>
++    <button class="tw-btn tw-btn--primary" id="dialog-ok" type="button"></button>
++  </div>
++</dialog>
+ <script src="texte.js"></script>
+ <script src="app.js"></script>
+diff --git a/taleward_worker/ui/texte.js b/taleward_worker/ui/texte.js
+index f83f569..006af13 100644
+--- a/taleward_worker/ui/texte.js
++++ b/taleward_worker/ui/texte.js
+@@ -167,5 +167,46 @@ window.TEXTE = {
+     f_einrichtung: "Der Worker kann nicht starten.",
+     bestaetigen_entfernen: "KI-Paket und Sprachmodelle wirklich entfernen? Der Worker verarbeitet dann nichts mehr, bis du neu installierst.",
+-    bestaetigen_koppeln: "Neu koppeln? Du brauchst dafür einen neuen Kopplungscode aus der Verwaltung.",
++    bestaetigen_koppeln: "Neu mit {server} koppeln? Du brauchst dafür einen neuen Kopplungscode aus der Verwaltung von {server}.",
++    // Betriebsart wechseln
++    "Betriebsart": "Betriebsart", "Betriebsart wechseln": "Betriebsart wechseln", "Wechseln": "Wechseln", "dem Server": "dem Server",
++    betrieb_jetzt_einzelplatz: "Alles auf diesem PC: Taleward läuft hier, die Handys deiner Gruppe verbinden sich über euer WLAN.",
++    betrieb_jetzt_verbunden: "Mit einem Server verbunden: Dieser PC verarbeitet die Aufnahmen für {server}.",
++    betrieb_titel_einzelplatz: "Zu „Alles auf diesem PC“ wechseln?",
++    betrieb_titel_verbunden: "Zu „Mit einem Server verbinden“ wechseln?",
++    betrieb_zu_einzelplatz: "Dieser PC verarbeitet dann keine Aufnahmen mehr für {server}. Taleward läuft danach ganz auf diesem PC.",
++    betrieb_zu_einzelplatz_ohne: "Taleward läuft danach ganz auf diesem PC, die Handys deiner Gruppe verbinden sich über euer WLAN.",
++    betrieb_zu_einzelplatz_folge: "Zurück geht es jederzeit hier. Für {server} brauchst du dann einen neuen Kopplungscode aus dessen Verwaltung.",
++    betrieb_zu_verbunden: "Taleward auf diesem PC wird beendet, Handys im WLAN erreichen es dann nicht mehr. Danach verbindest du diesen PC mit Adresse und Kopplungscode mit einem Server.",
++    betrieb_zu_verbunden_folge: "Deine Kampagnen bleiben auf diesem PC und sind wieder da, wenn du zurückwechselst. Willst du sie mitnehmen, speichere vorher eine Sicherung.",
++    betrieb_f_beschaeftigt: "Gerade läuft eine Installation, ein Update oder eine Sicherung. Versuch es danach noch einmal.",
++    betrieb_f_arbeitet: "Der Worker verarbeitet gerade eine Aufnahme. Warte, bis er fertig ist, oder pausiere ihn.",
++    betrieb_f_unbekannt: "Das hat nicht geklappt. Schau ins Protokoll.",
++    // Sicherung
++    "Sicherung": "Sicherung", "Sicherung speichern": "Sicherung speichern", "Sicherung zurückspielen": "Sicherung zurückspielen",
++    "Passwort für die Sicherung": "Passwort für die Sicherung", "Passwort der Sicherung": "Passwort der Sicherung",
++    "Datei": "Datei", "Datei wählen": "Datei wählen", "Zurückspielen": "Zurückspielen", "Speichern …": "Speichern …",
++    noch_keine_datei: "Noch keine gewählt",
++    sicherung_text: "Alle Kampagnen, Runden und Bilder in einer Datei, mit Passwort geschützt. Leg sie auf einen USB-Stick oder in einen Cloud-Ordner. Damit ziehst du auch auf einen neuen PC um.",
++    sicherung_speichern_text: "Wähle ein Passwort. Ohne dieses Passwort lässt sich die Sicherung nicht öffnen, und niemand kann es dir zurückholen. Schreib es dir auf.",
++    sicherung_passwort_hilfe: "Mindestens 8 Zeichen.",
++    sicherung_zurueck_text: "Die Sicherung ersetzt alles, was jetzt in Taleward auf diesem PC ist. Der jetzige Stand wird vorher gesichert, Taleward ist dabei kurz nicht erreichbar. Zugänge zur Cloud trägst du auf einem anderen PC neu ein.",
++    konto_sicherung_hilfe: "Ziehst du von einem anderen PC um? Dann spiel stattdessen deine Sicherung zurück.",
++    sich_laeuft_speichern: "Die Sicherung wird gespeichert …",
++    sich_laeuft_zurueck: "Die Sicherung wird zurückgespielt, Taleward startet danach neu …",
++    sich_fertig_speichern: "Sicherung gespeichert: {datei}",
++    sich_fertig_zurueck: "Sicherung zurückgespielt. Taleward läuft jetzt mit dem Stand aus {datei}.",
++    sich_f_password_too_short: "Das Passwort braucht mindestens 8 Zeichen.",
++    sich_f_passwoerter_ungleich: "Die beiden Passwörter stimmen nicht überein.",
++    sich_f_passwort: "Das Passwort passt nicht zu dieser Sicherung, oder die Datei ist beschädigt. Taleward läuft mit dem bisherigen Stand weiter.",
++    sich_f_format: "Diese Datei lässt sich nicht zurückspielen. Ist es eine Taleward-Sicherung? Taleward läuft mit dem bisherigen Stand weiter.",
++    sich_f_beschaeftigt: "Gerade läuft eine Installation, ein Update oder eine Sicherung. Versuch es danach noch einmal.",
++    sich_f_startet_noch: "Taleward startet noch. Versuch es gleich noch einmal.",
++    sich_f_keine_datei: "Wähle zuerst die Datei mit der Sicherung.",
++    sich_f_unbekannt: "Das hat nicht geklappt. Schau ins Protokoll.",
++    // Hilfe-Datei
++    "Hilfe-Datei erstellen": "Hilfe-Datei erstellen", "Hilfe-Datei": "Hilfe-Datei",
++    hilfe_text: "Für die Fehlersuche: Fassungen, System, Einstellungen und die letzten Zeilen der Protokolle. Schlüssel, Passwörter, Codes, E-Mail-Adressen und dein Windows-Name sind entfernt. Genau das hier wird gespeichert. Schick die Datei nur, wem du sie geben willst.",
++    hilfe_gespeichert: "Hilfe-Datei gespeichert: {datei}",
++    hilfe_f: "Die Datei ließ sich nicht speichern.",
+     kopiert: "Protokoll kopiert.",
+     hintergrund_hinweis: "Taleward läuft im Hintergrund weiter – das Symbol findest du im Infobereich.",
+@@ -339,5 +380,46 @@ window.TEXTE = {
+     f_einrichtung: "The worker can't start.",
+     bestaetigen_entfernen: "Really remove the AI package and speech models? The worker won't process anything until you reinstall.",
+-    bestaetigen_koppeln: "Pair again? You'll need a new pairing code from the admin.",
++    bestaetigen_koppeln: "Pair with {server} again? You'll need a new pairing code from the admin of {server}.",
++    // Switch mode
++    "Betriebsart": "Mode", "Betriebsart wechseln": "Switch mode", "Wechseln": "Switch", "dem Server": "the server",
++    betrieb_jetzt_einzelplatz: "Everything on this PC: Taleward runs here, and your group's phones connect over your Wi-Fi.",
++    betrieb_jetzt_verbunden: "Connected to a server: This PC processes recordings for {server}.",
++    betrieb_titel_einzelplatz: "Switch to “Everything on this PC”?",
++    betrieb_titel_verbunden: "Switch to “Connect to a server”?",
++    betrieb_zu_einzelplatz: "This PC will no longer process recordings for {server}. Taleward will then run entirely on this PC.",
++    betrieb_zu_einzelplatz_ohne: "Taleward will then run entirely on this PC, and your group's phones connect over your Wi-Fi.",
++    betrieb_zu_einzelplatz_folge: "You can switch back here at any time. You'll then need a new pairing code from the admin of {server}.",
++    betrieb_zu_verbunden: "Taleward on this PC will stop, and phones on your Wi-Fi can no longer reach it. You then connect this PC to a server with its address and a pairing code.",
++    betrieb_zu_verbunden_folge: "Your campaigns stay on this PC and are back when you switch back. If you want to take them with you, save a backup first.",
++    betrieb_f_beschaeftigt: "An installation, update or backup is running. Try again once it's done.",
++    betrieb_f_arbeitet: "The worker is processing a recording right now. Wait until it's done, or pause it.",
++    betrieb_f_unbekannt: "That didn't work. Have a look at the log.",
++    // Backup
++    "Sicherung": "Backup", "Sicherung speichern": "Save backup", "Sicherung zurückspielen": "Restore backup",
++    "Passwort für die Sicherung": "Password for the backup", "Passwort der Sicherung": "Password of the backup",
++    "Datei": "File", "Datei wählen": "Choose file", "Zurückspielen": "Restore", "Speichern …": "Save …",
++    noch_keine_datei: "None chosen yet",
++    sicherung_text: "All campaigns, sessions and images in one file, protected by a password. Put it on a USB stick or in a cloud folder. That's also how you move to a new PC.",
++    sicherung_speichern_text: "Choose a password. Without it the backup can't be opened, and nobody can recover it for you. Write it down.",
++    sicherung_passwort_hilfe: "At least 8 characters.",
++    sicherung_zurueck_text: "The backup replaces everything currently in Taleward on this PC. The current state is backed up first, and Taleward is briefly unavailable. On another PC you enter your cloud access again.",
++    konto_sicherung_hilfe: "Moving from another PC? Then restore your backup instead.",
++    sich_laeuft_speichern: "Saving the backup …",
++    sich_laeuft_zurueck: "Restoring the backup, Taleward restarts afterwards …",
++    sich_fertig_speichern: "Backup saved: {datei}",
++    sich_fertig_zurueck: "Backup restored. Taleward now runs with the state from {datei}.",
++    sich_f_password_too_short: "The password needs at least 8 characters.",
++    sich_f_passwoerter_ungleich: "The two passwords don't match.",
++    sich_f_passwort: "The password doesn't match this backup, or the file is damaged. Taleward keeps running with the previous state.",
++    sich_f_format: "This file can't be restored. Is it a Taleward backup? Taleward keeps running with the previous state.",
++    sich_f_beschaeftigt: "An installation, update or backup is running. Try again once it's done.",
++    sich_f_startet_noch: "Taleward is still starting. Try again in a moment.",
++    sich_f_keine_datei: "Choose the backup file first.",
++    sich_f_unbekannt: "That didn't work. Have a look at the log.",
++    // Help file
++    "Hilfe-Datei erstellen": "Create help file", "Hilfe-Datei": "Help file",
++    hilfe_text: "For troubleshooting: versions, system, settings and the last lines of the logs. Keys, passwords, codes, email addresses and your Windows name are removed. Exactly this is saved. Only send the file to people you want to have it.",
++    hilfe_gespeichert: "Help file saved: {datei}",
++    hilfe_f: "The file couldn't be saved.",
+     kopiert: "Log copied.", hintergrund_hinweis: "Taleward keeps running in the background – find its icon in the notification area.",
+     speicher_text: "AI package {motor}, speech models {modelle}.", testmodus_aktiv: "Test mode",
+diff --git a/uv.lock b/uv.lock
+index 0ceb8f6..43636df 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -677,5 +677,5 @@ wheels = [
+ [[package]]
+ name = "taleward-worker"
+-version = "0.3.3"
++version = "0.3.4"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
