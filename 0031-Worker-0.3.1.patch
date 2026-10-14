@@ -1,0 +1,403 @@
+From 7ae1d59f9df4939f47a99fee4e4a1c6583f97e00 Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 19:54:23 +0200
+Subject: [PATCH 31/31] Worker 0.3.1
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Server-Teil wird nur bei „Alles auf diesem PC“ angelegt. „Taleward
+öffnen“ erst, wenn die App auf dem Server liegt; bis dahin ein Hinweis.
+Weitere sichtbare Texte heißen Taleward.
+---
+ pyproject.toml                 |  2 +-
+ taleward_worker/__init__.py    |  2 +-
+ taleward_worker/einzelplatz.py | 34 +++++++++++++++++++++++++--
+ taleward_worker/oberflaeche.py | 43 ++++++++++++++++++++--------------
+ taleward_worker/ui/app.js      | 12 ++++++----
+ taleward_worker/ui/texte.js    | 34 +++++++++++++++------------
+ tests/test_einzelplatz.py      | 27 ++++++++++++++++++++-
+ uv.lock                        |  2 +-
+ 8 files changed, 114 insertions(+), 42 deletions(-)
+
+diff --git a/pyproject.toml b/pyproject.toml
+index b63378d..28cd9ed 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-worker"
+-version = "0.3.0"
++version = "0.3.1"
+ description = "Taleward Worker – verarbeitet Aufnahmen für einen Taleward-Server auf dem eigenen PC mit Grafikkarte"
+ license = "AGPL-3.0-only"
+diff --git a/taleward_worker/__init__.py b/taleward_worker/__init__.py
+index 3d30444..4548c41 100644
+--- a/taleward_worker/__init__.py
++++ b/taleward_worker/__init__.py
+@@ -4,5 +4,5 @@ Die App selbst ist klein. Das KI-Paket (Taleward-Server mit WhisperX, einige GB)
+ passender Fassung zum verbundenen Server und startet es als Unterprozess („chronik worker --app“).
+ """
+-VERSION = "0.3.0"
++VERSION = "0.3.1"
+ REPO = "Taleward/taleward-server"        # Server-Code = KI-Paket (engine-requirements.txt, Tags v…)
+ APP_REPO = "Taleward/taleward-worker"   # diese App
+diff --git a/taleward_worker/einzelplatz.py b/taleward_worker/einzelplatz.py
+index 15cf7c2..afebe96 100644
+--- a/taleward_worker/einzelplatz.py
++++ b/taleward_worker/einzelplatz.py
+@@ -27,5 +27,6 @@ ADRESSE = f"http://127.0.0.1:{PORT}"
+ APP_ADRESSE = f"http://localhost:{PORT}/app/"
+ WARTEZEITEN = [3, 10, 30, 120]
+-START_FRIST_S = 180          # so lange darf der erste Start dauern (Datenbank einrichten, Web-App laden)
++START_FRIST_S = 180          # so lange darf der erste Start dauern (Datenbank einrichten)
++APP_FRIST_S = 900            # so lange darf das erste Laden der App dauern, bevor die Oberfläche einen Hinweis zeigt
+ STOPP_FRIST_S = 20
+ MIN_PASSWORT = 8
+@@ -48,5 +49,7 @@ class ServerDienst:
+         self.zeilen: deque[str] = deque(maxlen=400)
+         self.bereit = threading.Event()
+-        threading.Thread(target=self._wachen, daemon=True, name="server-waechter").start()
++        self.app_bereit = threading.Event()  # die Web-App liegt vor (lädt der Server beim ersten Start von GitHub)
++        self.app_fehlt = False
++        self._waechter: threading.Thread | None = None
+ 
+     # ------------------------------------------------------------------ Steuerung
+@@ -58,4 +61,7 @@ class ServerDienst:
+             self._neustart_um = None
+             self._mit_schluessel = startschluessel
++            if self._waechter is None:
++                self._waechter = threading.Thread(target=self._wachen, daemon=True, name="server-waechter")
++                self._waechter.start()
+             if not self.laeuft():
+                 self._prozess_starten()
+@@ -67,4 +73,5 @@ class ServerDienst:
+             p = self._prozess
+         self.bereit.clear()
++        self.app_bereit.clear()
+         if p and p.poll() is None:
+             try:
+@@ -160,4 +167,5 @@ class ServerDienst:
+                         if callable(self.bei_bereit):
+                             threading.Thread(target=self.bei_bereit, daemon=True, name="worker-koppeln").start()
++                        threading.Thread(target=self._app_pruefen, args=(p,), daemon=True, name="app-da").start()
+                         return
+                 except httpx.HTTPError:
+@@ -167,4 +175,24 @@ class ServerDienst:
+             self._setzen("fehler", code="startet_nicht")
+ 
++    def _app_pruefen(self, p: subprocess.Popen) -> None:
++        """Liegt die Web-App vor? Beim ersten Start holt der Server sie erst – bis dahin bleibt „Taleward öffnen“ aus.
++        Nach APP_FRIST_S ein Hinweis (Internet prüfen), weiter nachsehen, nur seltener."""
++        beginn = time.monotonic()
++        self.app_fehlt = False
++        with httpx.Client(timeout=5, headers={"User-Agent": f"TalewardWorker/{VERSION}"}) as k:
++            while p.poll() is None and p is self._prozess:
++                try:
++                    if k.get(f"{ADRESSE}/app/").status_code == 200:
++                        self.app_fehlt = False
++                        self.app_bereit.set()
++                        return
++                except httpx.HTTPError:
++                    pass
++                lange = time.monotonic() - beginn > APP_FRIST_S
++                if lange and not self.app_fehlt:
++                    self.app_fehlt = True
++                    self._schreiben("Die App liegt noch nicht vor – Internetverbindung prüfen")
++                time.sleep(30 if lange else 2)
++
+     def _lesen(self, p: subprocess.Popen) -> None:
+         belegt = False
+@@ -178,4 +206,5 @@ class ServerDienst:
+         code = p.wait()
+         self.bereit.clear()
++        self.app_bereit.clear()
+         if self._schluessel:
+             pfade.startschluessel().unlink(missing_ok=True)
+@@ -261,3 +290,4 @@ class ServerDienst:
+     def fuer_oberflaeche(self) -> dict:
+         return {"zustand": self.zustand, "laeuft": self.laeuft(), "bereit": self.bereit.is_set(),
++                "app": self.app_bereit.is_set(), "appFehlt": self.app_fehlt,
+                 "kontoMoeglich": bool(self._schluessel) and self.bereit.is_set()}
+diff --git a/taleward_worker/oberflaeche.py b/taleward_worker/oberflaeche.py
+index 5815541..6d2dba7 100644
+--- a/taleward_worker/oberflaeche.py
++++ b/taleward_worker/oberflaeche.py
+@@ -78,5 +78,5 @@ class Api:
+ 
+     def im_browser_oeffnen(self) -> None:
+-        if self._app.server.bereit.is_set():
++        if self._app.server.app_bereit.is_set():
+             webbrowser.open(einzelplatz.APP_ADRESSE)
+ 
+@@ -270,6 +270,5 @@ class WorkerApp:
+         self.e = Einstellungen.laden()
+         self.dienst = Dienst(self.e)
+-        self.server = einzelplatz.ServerDienst()
+-        self.server.bei_bereit = self._worker_koppeln
++        self._server: einzelplatz.ServerDienst | None = None  # erst bei „Alles auf diesem PC“
+         self.app_fenster = None
+         self.netz: dict | None = None  # Firewall und Netzprofil (Einzelplatz, Windows) – langsam, darum zwischengespeichert
+@@ -298,4 +297,12 @@ class WorkerApp:
+ 
+     # -- Alles auf diesem PC
++    @property
++    def server(self) -> einzelplatz.ServerDienst:
++        """Der Server dieses PCs – nur im Betrieb „Alles auf diesem PC“ überhaupt angelegt."""
++        if self._server is None:
++            self._server = einzelplatz.ServerDienst()
++            self._server.bei_bereit = self._worker_koppeln
++        return self._server
++
+     def taleward_starten(self) -> None:
+         """Server aus dem KI-Paket starten; sobald er antwortet, koppelt sich der Worker (_worker_koppeln)."""
+@@ -348,6 +355,6 @@ class WorkerApp:
+ 
+     def app_fenster_oeffnen(self) -> bool:
+-        if not self.server.bereit.is_set():
+-            return False
++        if not self.server.app_bereit.is_set():
++            return False  # die App lädt der Server beim ersten Start erst noch
+         if self.app_fenster is not None:
+             try:
+@@ -551,7 +558,7 @@ class WorkerApp:
+                     en = self.e.sprache.startswith("en")
+                     try:
+-                        self.tray.notify("The worker keeps running in the background. Right-click the icon to quit."
+-                                         if en else "Der Worker läuft im Hintergrund weiter. Beenden über "
+-                                         "Rechtsklick auf das Symbol.", "Taleward Worker")
++                        self.tray.notify("Taleward keeps running in the background. Right-click the icon to quit."
++                                         if en else "Taleward läuft im Hintergrund weiter. Beenden über "
++                                         "Rechtsklick auf das Symbol.", "Taleward")
+                     except Exception:  # noqa: BLE001 – Hinweis ist Beiwerk
+                         pass
+@@ -586,5 +593,6 @@ class WorkerApp:
+         self.dienst.stoppen()
+         self.dienst.ollama.stoppen()
+-        self.server.stoppen()
++        if self._server is not None:
++            self._server.stoppen()
+         if self.tray is not None:
+             try:
+@@ -640,5 +648,5 @@ class WorkerApp:
+         )
+         try:
+-            icon = pystray.Icon("taleward-worker", symbol("gestoppt"), "Taleward Worker", menue)
++            icon = pystray.Icon("taleward-worker", symbol("gestoppt"), "Taleward", menue)
+             icon.run_detached()
+         except Exception:  # noqa: BLE001 – z. B. Wayland ohne Infobereich
+@@ -681,5 +689,5 @@ class WorkerApp:
+         breite, hoehe, mindestens = fenstergroesse(bildschirm_hoehe())
+         self.fenster = webview.create_window(
+-            "Taleward Worker", str(pfade.ressourcen() / "ui" / "index.html"), js_api=Api(self),
++            "Taleward", str(pfade.ressourcen() / "ui" / "index.html"), js_api=Api(self),
+             width=breite, height=hoehe, min_size=mindestens, background_color="#F2E8D5",
+             hidden=versteckt and self.tray is not None, minimized=versteckt and self.tray is None)
+@@ -695,5 +703,6 @@ class WorkerApp:
+         self._beendet.set()
+         self.dienst.stoppen()
+-        self.server.stoppen()
++        if self._server is not None:
++            self._server.stoppen()
+         if self.tray is not None:
+             try:
+@@ -719,6 +728,6 @@ def tray_titel(d: dict, sprache: str) -> str:
+         "gestoppt": ("Angehalten", "Stopped"),
+     }
+-    de_text, en_text = texte.get(art, ("Taleward Worker", "Taleward Worker"))
+-    return "Taleward Worker – " + (en_text if en else de_text)
++    de_text, en_text = texte.get(art, ("Bereit", "Ready"))
++    return "Taleward – " + (en_text if en else de_text)
+ 
+ 
+@@ -769,7 +778,7 @@ def webview2_fehlt_melden() -> None:
+ 
+         antwort = ctypes.windll.user32.MessageBoxW(  # type: ignore[attr-defined]
+-            None, "Taleward Worker braucht die Microsoft-Komponente „WebView2“, die auf diesem PC fehlt.\n\n"
+-            "Jetzt die Download-Seite öffnen? (Installieren, dann Taleward Worker erneut starten.)",
+-            "Taleward Worker", 0x14)  # MB_YESNO | MB_ICONERROR
++            None, "Taleward braucht die Microsoft-Komponente „WebView2“, die auf diesem PC fehlt.\n\n"
++            "Jetzt die Download-Seite öffnen? (Installieren, dann Taleward erneut starten.)",
++            "Taleward", 0x14)  # MB_YESNO | MB_ICONERROR
+         if antwort == 6:  # IDYES
+             webbrowser.open(WEBVIEW2_LINK)
+diff --git a/taleward_worker/ui/app.js b/taleward_worker/ui/app.js
+index 25a174c..4fd242f 100644
+--- a/taleward_worker/ui/app.js
++++ b/taleward_worker/ui/app.js
+@@ -98,6 +98,8 @@
+     if (nr === 5) kontoZeigen();
+     if (nr === 4) {
+-      $("#fertig-text").textContent = einzelplatz() ? t("fertig_text_einzelplatz", { name: S.einstellungen.anmeldename || "–" }) : t("fertig_text");
++      $("#fertig-text").textContent = einzelplatz() ? t("fertig_text_einzelplatz", { name: S.einstellungen.anmeldename || "–" })
++        + (S.taleward && !S.taleward.app ? " " + t("tw_app_laedt") : "") : t("fertig_text");
+       $("#los").textContent = t(einzelplatz() ? "Taleward öffnen" : "Worker starten");
++      $("#los").disabled = einzelplatz() && !(S.taleward && S.taleward.app);
+     }
+     if (nr === 1) {
+@@ -234,8 +236,10 @@
+     $("#taleward-titel").textContent = t("tw_" + art);
+     $("#taleward-text").textContent = art === "fehler" ? t("tw_f_" + (z.code || "startet_nicht"))
++      : art === "laeuft" && tw.appFehlt ? t("tw_app_fehlt")
++      : art === "laeuft" && !tw.app ? t("tw_app_laedt")
+       : art === "laeuft" ? t("tw_laeuft_text", { name: S.einstellungen.anmeldename || "–" })
+       : art === "abgestuerzt" ? t("tw_abgestuerzt_text", { wann: wann(z.neuerVersuch) }) : t("tw_" + art + "_text");
+-    $("#taleward-oeffnen").disabled = !tw.bereit;
+-    $("#taleward-browser").disabled = !tw.bereit;
++    $("#taleward-oeffnen").disabled = !tw.app;
++    $("#taleward-browser").disabled = !tw.app;
+     $("#taleward-neustart").hidden = art !== "fehler";
+     const netz = tw.netz || {};
+@@ -363,5 +367,5 @@
+       if (el.type === "checkbox") el.checked = !!wert; else el.value = wert || (n === "modell" ? "auto" : "");
+     });
+-    $("#fuss-version").textContent = "Taleward Worker " + S.version;
++    $("#fuss-version").textContent = "Taleward " + S.version;
+     $("#neu-koppeln").hidden = einzelplatz();
+     const k = S.hardware && S.hardware.grafikkarte;
+diff --git a/taleward_worker/ui/texte.js b/taleward_worker/ui/texte.js
+index 98f98da..1855db2 100644
+--- a/taleward_worker/ui/texte.js
++++ b/taleward_worker/ui/texte.js
+@@ -43,4 +43,6 @@ window.TEXTE = {
+     inst_netz_hinweis: "Am Ende fragt Windows einmal nach Erlaubnis, damit Handys in deinem WLAN Taleward erreichen.",
+     ph_suchen: "Neueste Fassung wird gesucht", taleward_hier: "Taleward auf diesem PC",
++    tw_app_laedt: "Taleward lädt die App – nur beim ersten Start, dauert ein paar Minuten.",
++    tw_app_fehlt: "Die App ließ sich noch nicht laden. Prüf die Internetverbindung – Taleward versucht es weiter.",
+     update_titel: "Updates automatisch installieren",
+     recaps_titel: "Recaps auch auf diesem PC schreiben",
+@@ -54,10 +56,10 @@ window.TEXTE = {
+     bestaetigen_ollama: "Ollama und das Sprachmodell von diesem PC entfernen?",
+     "Recaps": "Recaps", recaps_lokal: "hier, mit {modell}", recaps_server: "macht der Server bzw. ein anderer Worker",
+-    update_text: "Neue Fassungen kommen von deinem Server und werden installiert, sobald der Worker nichts zu tun hat.",
+-    app_update_auto: "Wird automatisch installiert, sobald der Worker frei ist.",
+-    app_update_laden: "Wird geladen … {prozent}", app_update_installieren: "Wird installiert – der Worker startet gleich neu.",
++    update_text: "Neue Fassungen werden installiert, sobald gerade nichts verarbeitet wird.",
++    app_update_auto: "Wird automatisch installiert, sobald gerade nichts verarbeitet wird.",
++    app_update_laden: "Wird geladen … {prozent}", app_update_installieren: "Wird installiert – Taleward startet gleich neu.",
+     app_update_fehler: "Update fehlgeschlagen: {fehler}", app_update_hand: "Bitte die neue Fassung von der Taleward-Website installieren.",
+     regler_titel: "Grafikspeicher für Taleward",
+-    regler_text: "Höchstens so viel nutzt der Worker. Der Rest bleibt frei für Spiele und andere Programme.",
++    regler_text: "Höchstens so viel nutzt Taleward. Der Rest bleibt frei für Spiele und andere Programme.",
+     regler_alles: "Alles", regler_von: "{a} von {b}",
+     prozessor_titel: "Nur den Prozessor verwenden",
+@@ -90,5 +92,5 @@ window.TEXTE = {
+     autostart_text: "Startet unsichtbar im Hintergrund, sobald du dich anmeldest.",
+     hintergrund_titel: "Beim Schließen weiterlaufen",
+-    hintergrund_text: "Das Fenster verschwindet, der Worker arbeitet weiter. Symbol im Infobereich.",
++    hintergrund_text: "Das Fenster verschwindet, Taleward arbeitet weiter. Symbol im Infobereich.",
+     hinweis_erste_modelle: "Beim ersten Start lädt der Worker die Sprachmodelle (einmalig etwa 5 GB). Danach geht es sofort los.",
+     modell_titel: "Sprachmodell",
+@@ -110,5 +112,5 @@ window.TEXTE = {
+     st_gestoppt: "Angehalten", st_gestoppt_text: "Der Worker ist aus. Aufträge warten auf dem Server.",
+     st_update: "KI-Paket wird aktualisiert", st_update_text: "Der Server läuft jetzt mit Fassung {fassung}. Der Worker lädt die passende Fassung ({prozent}) und wechselt danach selbst.",
+-    app_update: "Neue Fassung der Worker-App: {version}.",
++    app_update: "Neue Fassung von Taleward für diesen PC: {version}.",
+     neuer_versuch_in: "in {s} s", gleich: "gleich",
+     laufzeit: "seit {min} min",
+@@ -153,5 +155,5 @@ window.TEXTE = {
+     bestaetigen_koppeln: "Neu koppeln? Du brauchst dafür einen neuen Kopplungscode aus der Verwaltung.",
+     kopiert: "Protokoll kopiert.",
+-    hintergrund_hinweis: "Der Worker läuft im Hintergrund weiter – das Symbol findest du im Infobereich.",
++    hintergrund_hinweis: "Taleward läuft im Hintergrund weiter – das Symbol findest du im Infobereich.",
+     speicher_text: "KI-Paket {motor}, Sprachmodelle {modelle}.",
+     testmodus_aktiv: "Testmodus",
+@@ -200,4 +202,6 @@ window.TEXTE = {
+     inst_netz_hinweis: "At the end, Windows asks once for permission so phones on your Wi-Fi can reach Taleward.",
+     ph_suchen: "Looking for the newest version", taleward_hier: "Taleward on this PC",
++    tw_app_laedt: "Taleward is downloading the app – only on the first start, takes a few minutes.",
++    tw_app_fehlt: "The app couldn't be downloaded yet. Check your internet connection – Taleward keeps trying.",
+     "Status": "Status", "Einstellungen": "Settings", "Protokoll": "Log", "Verbinden": "Connect", "Prüfen": "Check",
+     "Installieren": "Install", "Fertig": "Done", "Worker einrichten": "Set up worker", "Adresse des Servers": "Server address",
+@@ -211,5 +215,5 @@ window.TEXTE = {
+     "Verwaltung öffnen": "Open admin", "Verbindung und KI-Paket": "Connection and AI package", "Neu koppeln": "Pair again",
+     "KI-Paket neu installieren": "Reinstall AI package", "KI-Paket und Modelle entfernen": "Remove AI package and models",
+-    "Worker beenden": "Quit worker", "Kopieren": "Copy", "Zurück": "Back", "Pausieren": "Pause", "Fortsetzen": "Resume",
++    "Taleward beenden": "Quit Taleward", "Kopieren": "Copy", "Zurück": "Back", "Pausieren": "Pause", "Fortsetzen": "Resume",
+     "Starten": "Start", "Anhalten": "Stop", "Jetzt aktualisieren": "Update now", "Herunterladen": "Download",
+     update_titel: "Install updates automatically",
+@@ -224,11 +228,11 @@ window.TEXTE = {
+     bestaetigen_ollama: "Remove Ollama and the language model from this PC?",
+     "Recaps": "Recaps", recaps_lokal: "here, with {modell}", recaps_server: "done by the server or another worker",
+-    update_text: "New versions come from your server and are installed as soon as the worker has nothing to do.",
+-    app_update_auto: "Will be installed automatically as soon as the worker is free.",
+-    app_update_laden: "Downloading … {prozent}", app_update_installieren: "Installing – the worker restarts in a moment.",
++    update_text: "New versions are installed as soon as nothing is being processed.",
++    app_update_auto: "Will be installed automatically as soon as nothing is being processed.",
++    app_update_laden: "Downloading … {prozent}", app_update_installieren: "Installing – Taleward restarts in a moment.",
+     app_update_fehler: "Update failed: {fehler}", app_update_hand: "Please install the new version from the Taleward website.",
+     "Jetzt aktualisieren": "Update now", "Was ist neu?": "What's new?",
+     regler_titel: "Graphics memory for Taleward",
+-    regler_text: "The worker uses at most this much. The rest stays free for games and other programs.",
++    regler_text: "Taleward uses at most this much. The rest stays free for games and other programs.",
+     regler_alles: "All", regler_von: "{a} of {b}",
+     prozessor_titel: "Use the processor only",
+@@ -260,5 +264,5 @@ window.TEXTE = {
+     fertig_text: "From now on the worker fetches new recordings from the server by itself. Nothing else to do.",
+     autostart_titel: "Start with the computer", autostart_text: "Starts invisibly in the background when you sign in.",
+-    hintergrund_titel: "Keep running when closed", hintergrund_text: "The window disappears, the worker keeps working. Icon in the notification area.",
++    hintergrund_titel: "Keep running when closed", hintergrund_text: "The window disappears, Taleward keeps working. Icon in the notification area.",
+     hinweis_erste_modelle: "On first start the worker downloads the speech models (about 5 GB, once). After that it starts right away.",
+     modell_titel: "Speech model", modell_text: "“Automatic” picks by graphics memory.",
+@@ -278,5 +282,5 @@ window.TEXTE = {
+     st_gestoppt: "Stopped", st_gestoppt_text: "The worker is off. Jobs wait on the server.",
+     st_update: "Updating AI package", st_update_text: "The server now runs version {fassung}. The worker is downloading the matching version ({prozent}) and switches over by itself.",
+-    app_update: "New version of the worker app: {version}.",
++    app_update: "New version of Taleward for this PC: {version}.",
+     neuer_versuch_in: "in {s} s", gleich: "shortly", laufzeit: "for {min} min",
+     pr_gpu: "Graphics card",
+@@ -308,5 +312,5 @@ window.TEXTE = {
+     bestaetigen_entfernen: "Really remove the AI package and speech models? The worker won't process anything until you reinstall.",
+     bestaetigen_koppeln: "Pair again? You'll need a new pairing code from the admin.",
+-    kopiert: "Log copied.", hintergrund_hinweis: "The worker keeps running in the background – find its icon in the notification area.",
++    kopiert: "Log copied.", hintergrund_hinweis: "Taleward keeps running in the background – find its icon in the notification area.",
+     speicher_text: "AI package {motor}, speech models {modelle}.", testmodus_aktiv: "Test mode",
+     fassung_text: "App {app} · AI package {motor}",
+diff --git a/tests/test_einzelplatz.py b/tests/test_einzelplatz.py
+index b7bf3ce..0f1fa47 100644
+--- a/tests/test_einzelplatz.py
++++ b/tests/test_einzelplatz.py
+@@ -40,5 +40,6 @@ class H(BaseHTTPRequestHandler):
+         self.send_header("Content-Length", str(len(roh))); self.end_headers(); self.wfile.write(roh)
+     def do_GET(self):
+-        self._json(200 if self.path == "/api/v1/health" else 404, {"status": "ok"})
++        ok = self.path == "/api/v1/health" or (self.path == "/app/" and os.environ.get("ERSATZ_APP"))
++        self._json(200 if ok else 404, {"status": "ok"})
+     def do_POST(self):
+         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+@@ -260,2 +261,26 @@ def test_oberflaeche_wahl_und_konto(monkeypatch):
+     assert app.e.token == "wk.abc.def"
+     assert api.betrieb_waehlen("verbunden") == {"ok": False}
++
++
++def test_taleward_oeffnen_erst_wenn_die_app_da_ist(ersatz, monkeypatch):
++    d = ersatz()
++    d.starten()
++    assert d.warten_bis_bereit(15)
++    time.sleep(0.5)
++    assert not d.app_bereit.is_set() and not d.fuer_oberflaeche()["app"]  # Server läuft, App noch nicht geladen
++    d.stoppen()
++    monkeypatch.setenv("ERSATZ_APP", "1")
++    d.starten()
++    assert d.warten_bis_bereit(15) and d.app_bereit.wait(5)
++    assert d.fuer_oberflaeche()["app"]
++    d.stoppen()
++    assert not d.app_bereit.is_set()
++
++
++def test_ohne_alles_auf_diesem_pc_kein_server_dienst():
++    from taleward_worker.oberflaeche import Api, WorkerApp
++
++    app = WorkerApp()
++    Api(app).zustand()
++    assert app._server is None  # im Worker-Betrieb wird nichts davon angelegt
++    app.beenden()
+diff --git a/uv.lock b/uv.lock
+index 368750b..40b8be1 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -677,5 +677,5 @@ wheels = [
+ [[package]]
+ name = "taleward-worker"
+ version = "taleward-worker"
