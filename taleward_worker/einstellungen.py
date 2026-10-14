@@ -34,6 +34,7 @@ class Einstellungen:
     konto_angelegt: bool = False    # Einzelplatz: Konto der SL angelegt
     anmeldename: str = ""           # Einzelplatz: zum Anzeigen („Dein Anmeldename“)
     firewall_gefragt: bool = False  # Einzelplatz: Netzwerk-Freigabe einmal von selbst angeboten
+    update_gescheitert: str = ""    # Einzelplatz: Server-Fassung, deren Update zurückgenommen wurde (nicht von selbst wieder)
     hinweis_hintergrund_gezeigt: bool = False
 
     @property

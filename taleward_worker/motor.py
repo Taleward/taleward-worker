@@ -157,6 +157,8 @@ class Installation:
     zeilen: list[str] = field(default_factory=list)
     vor_tausch: object = None     # Aufruf vor dem Ersetzen des alten Motors (laufenden Worker anhalten)
     nach_tausch: object = None
+    alt_behalten: bool = False    # Update „Alles auf diesem PC“: alten Motor bis zur Prüfung als motor-alt behalten
+    weg: str = ""                 # gross (neuer Ordner), gleich/klein (im vorhandenen Motor) – für den Rückweg
     _prozess: subprocess.Popen | None = None
     _abbrechen: threading.Event = field(default_factory=threading.Event)
 
@@ -251,9 +253,12 @@ class Installation:
         if not self.testmodus:
             art, pakete = self._aenderung(q)
             if art == "gleich":
+                self.weg = "gleich"
                 return self._nur_taleward(q)
             if art == "klein":  # nur kleine Bibliotheken neu – in den vorhandenen Motor, statt 8 GB neu zu laden
+                self.weg = "klein"
                 return self._nur_taleward(q, zusatz=pakete)
+        self.weg = "gross"
         system = "test" if self.testmodus else "cpu" if self.backend == "cpu" else (
             "windows" if sys.platform == "win32" else "linux")
         self.erwartet_mb = ERWARTET_MB[system]
@@ -319,7 +324,8 @@ class Installation:
         finally:
             if callable(self.nach_tausch):
                 self.nach_tausch()
-        ordner_entfernen(weg)
+        if not self.alt_behalten:
+            ordner_entfernen(weg)
         # Hinweis: Skripte im Motor (chronik.exe) kennen noch den alten Ordnernamen – gestartet wird daher immer
         # mit „python -m app.cli“, das funktioniert nach dem Umbenennen weiter.
 
@@ -388,6 +394,47 @@ class Installation:
         finally:
             if callable(self.nach_tausch):
                 self.nach_tausch()
+
+    # ------------------------------------------------------------------ Rückweg (Update „Alles auf diesem PC“)
+    def stand_festhalten(self, ziel: Path) -> None:
+        """Vor dem Update: genaue Paketliste des laufenden Motors (mit Herkunft des Taleward-Codes) und seine
+        Kennzeichnung sichern – daraus stellt `zurueck` den alten Stand wieder her."""
+        ziel.parent.mkdir(parents=True, exist_ok=True)
+        r = subprocess.run([uv_programm(), "pip", "freeze", "--python", str(pfade.motor_python())],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+                           env=self._umgebung(), cwd=pfade.basis(), **_ohne_fenster())
+        if r.returncode != 0 or not r.stdout.strip():
+            raise MotorFehler("installation", "Paketliste nicht lesbar: " + (r.stderr or r.stdout)[-500:])
+        ziel.write_text(r.stdout, encoding="utf-8")
+        kennung = pfade.motor() / "taleward-motor.json"
+        if kennung.exists():
+            shutil.copyfile(kennung, ziel.with_suffix(".json"))
+
+    def zurueck(self, vorher: Path) -> None:
+        """Nach einem gescheiterten Update: den alten Motor wiederherstellen. Großes Update → der behaltene Ordner
+        motor-alt kommt zurück (ohne Download). Sonst → Paketliste von vorher einspielen (`uv pip sync`, lädt nur
+        den alten Taleward-Code und ggf. die paar geänderten Bibliotheken)."""
+        alt = pfade.basis() / "motor-alt"
+        if self.weg == "gross" and (alt / "taleward-motor.json").exists():
+            kaputt = pfade.basis() / "motor-kaputt"
+            ordner_entfernen(kaputt)
+            if pfade.motor().exists():
+                umbenennen(pfade.motor(), kaputt)
+            umbenennen(alt, pfade.motor())
+            ordner_entfernen(kaputt)
+            return
+        if not vorher.exists():
+            raise MotorFehler("installation", "Paketliste von vorher fehlt.")
+        torch = "cpu" if self.backend == "cpu" else TORCH_BACKEND
+        self._abbrechen.clear()
+        self._uv("pip", "sync", "--python", str(pfade.motor_python()), "--torch-backend", torch, str(vorher),
+                 anteil_von=0.0, anteil_bis=1.0)
+        kennung = vorher.with_suffix(".json")
+        if kennung.exists():
+            shutil.copyfile(kennung, pfade.motor() / "taleward-motor.json")
+
+    def alt_entfernen(self) -> None:
+        ordner_entfernen(pfade.basis() / "motor-alt")
 
     def _python_einrichten(self) -> Path:
         """Python 3.11 über uv holen und den Pfad zur python(.exe) liefern.
