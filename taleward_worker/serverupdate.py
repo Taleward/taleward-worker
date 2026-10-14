@@ -240,12 +240,14 @@ class ServerUpdate:
         self._protokoll(f"Taleward läuft weiter mit Fassung {self.alt}; {self.neu} wird nicht von selbst wieder versucht")
 
     # ------------------------------------------------------------------ Sicherung (mit der jeweils installierten Fassung)
-    def cli(self, *argumente: str) -> subprocess.CompletedProcess:
+    def cli(self, *argumente: str, eingabe: str | None = None) -> subprocess.CompletedProcess:
+        """`eingabe` (z. B. ein Passwort) geht über die Standardeingabe, nie in die Befehlszeile."""
         py = os.environ.get("TALEWARD_MOTOR") or str(pfade.motor_python())
         umgebung = self.app.server.umgebung()
         umgebung.pop("TALEWARD_STARTSCHLUESSEL_DATEI", None)
         return subprocess.run([py, "-m", "app.cli", *argumente], capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=1800, env=umgebung, cwd=pfade.basis(),
+                              input=eingabe if eingabe is not None else "",
                               **({"creationflags": 0x08000000} if os.name == "nt" else {}))
 
     def sicherung_anlegen(self) -> Path:

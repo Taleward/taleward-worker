@@ -9,9 +9,10 @@ import sys
 import threading
 import time
 import webbrowser
+from pathlib import Path
 
-from taleward_worker import (VERSION, autostart, einzelplatz, fenster, hardware, motor, netzfreigabe, ollama, pfade,
-                             selbstupdate, server, serverupdate)
+from taleward_worker import (VERSION, autostart, einzelplatz, fenster, hardware, mitnehmen, motor, netzfreigabe,
+                             ollama, pfade, selbstupdate, server, serverupdate)
 from taleward_worker.dienst import Dienst
 from taleward_worker.einstellungen import Einstellungen
 
@@ -38,7 +39,8 @@ class Api:
             "appUpdate": a.app_update.stand() if a.app_update else None, "trayVorhanden": a.tray is not None,
             "entwicklung": bool(os.environ.get("TALEWARD_MOTOR")),
             "ollama": a.ollama_stand(),
-            "taleward": {**a.server.fuer_oberflaeche(), "netz": a.netz, "update": a.ep_update.fuer_oberflaeche()}
+            "taleward": {**a.server.fuer_oberflaeche(), "netz": a.netz, "update": a.ep_update.fuer_oberflaeche(),
+                         "sicherung": a.sicherung.stand()}
             if a.e.einzelplatz else None,
         }
 
@@ -49,6 +51,20 @@ class Api:
             return {"ok": False}
         a.e.betrieb = art
         a.e.speichern()
+        return {"ok": True}
+
+    def betrieb_wechseln(self, ziel: str) -> dict:
+        """Zwischen „Alles auf diesem PC“ und „Mit einem Server verbinden“ wechseln – in beide Richtungen. Die
+        Kampagnen von „Alles auf diesem PC“ bleiben auf dem PC und sind nach dem Zurückwechseln wieder da."""
+        a = self._app
+        if ziel not in ("einzelplatz", "verbunden") or ziel == a.e.art:
+            return {"ok": False, "fehler": "unbekannt"}
+        if a.ep_update.laeuft() or a.sicherung.laeuft() or (
+                a.installation and a.installation.phase not in ("fertig", "fehler", "abgebrochen")):
+            return {"ok": False, "fehler": "beschaeftigt"}
+        if a.dienst.zustand.get("art") == "arbeitet":
+            return {"ok": False, "fehler": "arbeitet"}
+        threading.Thread(target=a.betrieb_wechseln, args=(ziel,), daemon=True, name="betrieb").start()
         return {"ok": True}
 
     def konto_anlegen(self, name: str, passwort: str, passwort2: str) -> dict:
@@ -99,6 +115,58 @@ class Api:
         if not self._app.e.einzelplatz:
             return {"ok": False, "grund": "aktuell"}
         return self._app.ep_update.jetzt()
+
+    # -- Sicherung und Hilfe-Datei
+    def sicherung_speichern(self, passwort: str, passwort2: str) -> dict:
+        a = self._app
+        if not a.e.einzelplatz:
+            return {"ok": False, "fehler": "unbekannt"}
+        if len(passwort or "") < mitnehmen.MIN_PASSWORT:
+            return {"ok": False, "fehler": "password_too_short"}
+        if passwort != passwort2:
+            return {"ok": False, "fehler": "passwoerter_ungleich"}
+        ziel = a.datei_waehlen(speichern=True, name=f"taleward-sicherung-{time.strftime('%Y-%m-%d')}"
+                               f"{mitnehmen.ENDUNG}")
+        if not ziel:
+            return {"ok": False, "fehler": "abgebrochen"}
+        if ziel.suffix.lower() != mitnehmen.ENDUNG:
+            ziel = ziel.with_name(ziel.name + mitnehmen.ENDUNG)
+        return a.sicherung.speichern(ziel, passwort)
+
+    def sicherung_waehlen(self) -> dict:
+        a = self._app
+        if not a.e.einzelplatz:
+            return {"ok": False, "fehler": "unbekannt"}
+        datei = a.datei_waehlen(speichern=False)
+        if not datei:
+            return {"ok": False, "fehler": "abgebrochen"}
+        a.sicherung.gewaehlt = datei
+        return {"ok": True, "datei": datei.name}
+
+    def sicherung_zurueckspielen(self, passwort: str) -> dict:
+        a = self._app
+        if not a.e.einzelplatz or not passwort:
+            return {"ok": False, "fehler": "passwort"}
+        return a.sicherung.zurueckspielen(passwort)
+
+    def hilfe_vorschau(self) -> dict:
+        """Genau dieser Text wird gespeichert – nichts anderes."""
+        self._app.hilfe = mitnehmen.hilfe_text(self._app)
+        return {"text": self._app.hilfe}
+
+    def hilfe_speichern(self) -> dict:
+        a = self._app
+        if not a.hilfe:
+            return {"ok": False, "fehler": "keine_vorschau"}
+        ziel = a.datei_waehlen(speichern=True, name=f"taleward-hilfe-{time.strftime('%Y-%m-%d')}.txt", text=True)
+        if not ziel:
+            return {"ok": False, "fehler": "abgebrochen"}
+        try:
+            ziel.write_text(a.hilfe, encoding="utf-8")
+        except OSError:
+            return {"ok": False, "fehler": "nicht_gespeichert"}
+        a.hilfe = ""
+        return {"ok": True, "datei": ziel.name}
 
     def hardware_pruefen(self) -> dict:
         self._app.hardware = hardware.bericht()
@@ -209,12 +277,13 @@ class Api:
         return {"ok": True}
 
     def entkoppeln(self) -> None:
+        """Mit einem (neuen) Kopplungscode wieder verbinden. Die Betriebsart wechselt „Betriebsart wechseln“."""
         a = self._app
         if a.e.einzelplatz:
             return  # der Worker gehört zu Taleward auf diesem PC
         a.dienst.stoppen()
         a.e.token = ""
-        a.e.betrieb = ""  # zurück zur Wahl „Alles auf diesem PC“ / „Mit einem Server verbinden“
+        a.e.betrieb = "verbunden"
         a.e.speichern()
 
     def ki_entfernen(self, modelle_auch: bool = True) -> None:
@@ -278,6 +347,8 @@ class WorkerApp:
         self.dienst = Dienst(self.e)
         self._server: einzelplatz.ServerDienst | None = None  # erst bei „Alles auf diesem PC“
         self._update: serverupdate.ServerUpdate | None = None
+        self.sicherung = mitnehmen.Sicherung(self)
+        self.hilfe = ""  # zuletzt gezeigte Hilfe-Datei (genau diese wird gespeichert)
         self.app_fenster = None
         self.netz: dict | None = None  # Firewall und Netzprofil (Einzelplatz, Windows) – langsam, darum zwischengespeichert
         self.installation: motor.Installation | None = None
@@ -324,6 +395,52 @@ class WorkerApp:
         if not self.e.einzelplatz or not (motor.installiert() or os.environ.get("TALEWARD_MOTOR")):
             return
         self.server.starten(startschluessel=not self.e.konto_angelegt)
+
+    def betrieb_wechseln(self, ziel: str) -> None:
+        """Anhalten, was zur bisherigen Betriebsart gehört, und in die neue wechseln. Zu „Mit einem Server
+        verbinden“ geht es mit Adresse und Kopplungscode weiter; zu „Alles auf diesem PC“ startet Taleward hier
+        (beim ersten Mal mit Konto anlegen, sonst mit den Kampagnen von vorher)."""
+        self.dienst.stoppen()
+        if self._server is not None:
+            self._server.stoppen()
+        self.e.token, self.e.betrieb = "", ziel
+        if ziel == "verbunden":
+            self.e.server = ""
+        self.e.speichern()
+        self.server_version = self.server_name = None
+        self.dienst.protokoll.schreiben("Betriebsart gewechselt: " + (
+            "Alles auf diesem PC" if ziel == "einzelplatz" else "Mit einem Server verbinden"))
+        if ziel == "einzelplatz":
+            self.hardware = hardware.bericht()
+            if self.motor_passt_einzelplatz():
+                self.taleward_starten()
+            elif motor.installiert():
+                self.installieren(self.e.testmodus)  # KI-Paket zu alt für „Alles auf diesem PC“ → neueste Fassung
+        self.tray_aktualisieren()
+
+    def motor_passt_einzelplatz(self) -> bool:
+        if os.environ.get("TALEWARD_MOTOR"):
+            return True
+        fassung = str((motor.installiert() or {}).get("fassung") or "")
+        return bool(fassung) and not selbstupdate.neuer(einzelplatz.MINDEST_SERVER, fassung)
+
+    def datei_waehlen(self, speichern: bool, name: str = "", text: bool = False):
+        """Dateidialog von Windows (bzw. des Systems). Liefert den Pfad oder None (abgebrochen)."""
+        import webview
+
+        arten = ("Textdatei (*.txt)",) if text else ("Taleward-Sicherung (*.taleward)",)
+        dialog = getattr(webview, "FileDialog", None)
+        typ = (dialog.SAVE if speichern else dialog.OPEN) if dialog else (
+            webview.SAVE_DIALOG if speichern else webview.OPEN_DIALOG)
+        try:
+            ordner = str(Path.home() / "Documents") if (Path.home() / "Documents").is_dir() else str(Path.home())
+            auswahl = self.fenster.create_file_dialog(typ, directory=ordner, save_filename=name, file_types=arten)
+        except Exception as e:  # noqa: BLE001 – kein Dialog möglich
+            log.warning("Dateidialog nicht möglich: %s", e)
+            return None
+        if not auswahl:
+            return None
+        return Path(auswahl if isinstance(auswahl, str) else auswahl[0])
 
     def netz_pruefen(self) -> None:
         if self.e.einzelplatz:
@@ -466,6 +583,8 @@ class WorkerApp:
         # Neu installieren → dieselbe Fassung wie bisher (eine neue kommt nur über das Update mit Sicherung)
         if self.e.einzelplatz:
             fassung = str((motor.installiert() or {}).get("fassung") or "") if not testmodus else ""
+            if fassung and selbstupdate.neuer(einzelplatz.MINDEST_SERVER, fassung):
+                fassung = ""  # z. B. nach dem Wechsel von „Mit einem Server verbinden“: zu alt → neueste
         else:
             fassung = self.server_version or ""
         self.installation = motor.Installation(fassung, testmodus=testmodus, backend=backend,
