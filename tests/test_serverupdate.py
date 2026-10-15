@@ -94,7 +94,7 @@ class ErsatzInstallation:
         t.start()
         return t
 
-    def zurueck(self, vorher: Path):
+    def zurueck(self, vorher: Path, alt_fassung=None):
         self.protokoll.append("zurueck")
         if type(self).rueckweg_scheitert:
             raise OSError("Datei gesperrt")

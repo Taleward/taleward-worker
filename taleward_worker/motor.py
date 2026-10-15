@@ -335,9 +335,10 @@ class Installation:
         # mit „python -m app.cli“, das funktioniert nach dem Umbenennen weiter.
 
 
-    def _listen(self, q: dict) -> tuple[Path, Path | None]:
+    def _listen(self, q: dict, fassung: str | None = None, mit_pytorch: bool = True) -> tuple[Path, Path | None]:
         """Paketlisten aus uv.lock der Fassung: (mit Prüfsummen, PyTorch-Familie – mit Prüfsummen aus der Liste am
-        Release, sonst nur auf die Version festgelegt). Im Testmodus nur die Grundpakete und ffmpeg, ohne PyTorch."""
+        Release). Fassungen ab PYTORCH_LISTE_PFLICHT_AB ohne Liste werden nicht installiert; ältere nur auf die Version
+        festgelegt (steht im Protokoll). Im Testmodus nur die Grundpakete und ffmpeg, ohne PyTorch."""
         ordner = pfade.basis() / "cache"
         ordner.mkdir(parents=True, exist_ok=True)
         basis, ki = pruefsummen(q, umgebung=self._umgebung(), ordner=ordner / "lock")
@@ -351,9 +352,12 @@ class Installation:
             if not any(n == "imageio-ffmpeg" for n, _ in eintraege(geprueft)):
                 geprueft += IMAGEIO_FFMPEG
         (ordner / "geprueft.txt").write_text(geprueft, encoding="utf-8")
-        if not pytorch.strip():
+        if not pytorch.strip() or not mit_pytorch:
             return ordner / "geprueft.txt", None
         liste = pytorch_pruefsummen(q)
+        if liste is None and liste_pflicht(fassung or self.fassung, q):
+            raise MotorFehler("installation", f"Für die Fassung {fassung or self.fassung} fehlt die unterschriebene "
+                                              "Liste der PyTorch-Prüfsummen – sie wird nicht installiert.")
         if liste is None:
             self.pytorch_geprueft = False
             self.zeilen.append("PyTorch ohne eigene Prüfsummen (diese Fassung hat noch keine Liste) – nur die Version "
@@ -426,7 +430,8 @@ class Installation:
     def _nur_taleward(self, q: dict, zusatz: list[str] | None = None) -> None:
         self.phase = "taleward"
         py = str(pfade.motor_python())
-        geprueft = self._listen(q)[0] if zusatz else None  # vorher: braucht das Netz, der Worker läuft noch
+        # vorher: braucht das Netz, der Worker läuft noch. PyTorch tauscht ein kleines Update nie.
+        geprueft = self._listen(q, mit_pytorch=False)[0] if zusatz else None
         self._bauwerkzeug(py)  # stört den laufenden Worker nicht (wird nur beim Bauen gebraucht)
         if callable(self.vor_tausch):
             self.vor_tausch()  # laufenden Worker anhalten (nur für wenige Sekunden)
@@ -465,10 +470,11 @@ class Installation:
         if kennung.exists():
             shutil.copyfile(kennung, ziel.with_suffix(".json"))
 
-    def zurueck(self, vorher: Path) -> None:
+    def zurueck(self, vorher: Path, alt_fassung: str | None = None) -> None:
         """Nach einem gescheiterten Update: den alten Motor wiederherstellen. Großes Update → der behaltene Ordner
-        motor-alt kommt zurück (ohne Download). Sonst → Paketliste von vorher einspielen (`uv pip sync`, lädt nur
-        den alten Taleward-Code und ggf. die paar geänderten Bibliotheken)."""
+        motor-alt kommt zurück (ohne Download). Sonst → die alte Fassung wie bei einer Installation: ihre Pakete mit den
+        Prüfsummen aus ihrer uv.lock, das Bauwerkzeug mit festen Prüfsummen und ihr Taleward-Code ohne
+        Paketverzeichnis. PyTorch bleibt, wie es ist – ein kleines Update tauscht es nie."""
         alt = pfade.basis() / "motor-alt"
         if self.weg == "gross" and (alt / "taleward-motor.json").exists():
             kaputt = pfade.basis() / "motor-kaputt"
@@ -478,13 +484,22 @@ class Installation:
             umbenennen(alt, pfade.motor())
             ordner_entfernen(kaputt)
             return
-        if not vorher.exists():
-            raise MotorFehler("installation", "Paketliste von vorher fehlt.")
-        torch = "cpu" if self.backend == "cpu" else TORCH_BACKEND
-        self._abbrechen.clear()
-        self._uv("pip", "sync", "--python", str(pfade.motor_python()), "--torch-backend", torch, str(vorher),
-                 anteil_von=0.0, anteil_bis=1.0)
         kennung = vorher.with_suffix(".json")
+        if not alt_fassung and kennung.exists():
+            try:
+                alt_fassung = str(json.loads(kennung.read_text(encoding="utf-8")).get("fassung") or "")
+            except (OSError, ValueError):
+                alt_fassung = ""
+        if not alt_fassung:
+            raise MotorFehler("installation", "Fassung von vorher unbekannt.")
+        q = quelle(alt_fassung)
+        py = str(pfade.motor_python())
+        self._abbrechen.clear()
+        geprueft, _ = self._listen(q, alt_fassung, mit_pytorch=False)
+        self._uv("pip", "install", "--python", py, "--no-deps", "--require-hashes", "-r", str(geprueft),
+                 anteil_von=0.0, anteil_bis=0.6)
+        self._bauwerkzeug(py)
+        self._taleward_einspielen(py, q, anteil_von=0.6, anteil_bis=1.0, neu=True)
         if kennung.exists():
             shutil.copyfile(kennung, pfade.motor() / "taleward-motor.json")
 
@@ -693,8 +708,20 @@ trove-classifiers==2026.9.21.13 \\
 """
 
 PYTORCH_LISTE = "pytorch-pruefsummen.txt"
+# Ab dieser Server-Fassung trägt jede Freigabe die Liste – ohne sie wird nichts installiert. Ältere Fassungen (alle mit
+# torch 2.8.0) gehen noch ohne; sobald die erste Liste vorliegt, kommt sie für diese fest in die Worker-App.
+PYTORCH_LISTE_PFLICHT_AB = "0.4.103"
 MAX_PYTORCH_LISTE = 256 * 1024
 _PYTORCH_ZEILE = re.compile(r"^([a-z0-9]+) ([a-z0-9_.-]+)==([A-Za-z0-9.+!]+)((?: --hash=sha256:[0-9a-f]{64})+)$")
+
+
+def liste_pflicht(fassung: str, q: dict) -> bool:
+    """Braucht diese Fassung die PyTorch-Liste? Entwicklung (lokaler Ordner) nie."""
+    from taleward_worker.selbstupdate import neuer
+
+    if q.get("ref") == "lokal" or not fassung:
+        return False
+    return not neuer(PYTORCH_LISTE_PFLICHT_AB, fassung)
 
 
 def installierte_pakete(py: str, umgebung: dict) -> set[str]:

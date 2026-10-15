@@ -197,3 +197,28 @@ def test_quelle_reicht_die_anhaenge_der_freigabe_weiter():
     q = motor._adressen("v0.4.103", "a" * 40, {"pytorch-pruefsummen.txt": "b" * 64})
     assert q["anhaenge"] == {"pytorch-pruefsummen.txt": "b" * 64}
     assert q["release"].endswith("/releases/download/v0.4.103")
+
+
+def test_ab_der_pflichtfassung_nur_mit_liste(monkeypatch):
+    """Ab PYTORCH_LISTE_PFLICHT_AB ohne unterschriebene Liste keine Installation – auch nicht, wenn ein Server eine
+    solche Fassung nennt. Ältere Fassungen (ohne Liste) gehen wie bisher, mit Hinweis im Protokoll."""
+    from taleward_worker import motor
+
+    assert motor.liste_pflicht(motor.PYTORCH_LISTE_PFLICHT_AB, {}) and motor.liste_pflicht("0.5.0", {})
+    assert not motor.liste_pflicht("0.4.102", {}) and not motor.liste_pflicht("0.9.9", {"ref": "lokal"})
+    monkeypatch.setattr(motor, "quelle", lambda f: {"ref": f"v{f}", "genau": True, "paket": "paket.zip"})
+    monkeypatch.setattr(motor, "installierte_pakete", lambda py, umgebung: set())
+    monkeypatch.setattr(motor, "installiert", lambda: None)
+    monkeypatch.setattr(motor, "home_festlegen", lambda venv, py: None)
+    monkeypatch.setattr(motor.Installation, "_python_einrichten", lambda self: Path("python"))
+    aufrufe = []
+
+    def _uv(self, *a, **k):
+        aufrufe.append(a)
+        if a[0] == "venv":
+            Path(a[1]).mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(motor.Installation, "_uv", _uv)
+    inst = motor.Installation(motor.PYTORCH_LISTE_PFLICHT_AB)
+    inst._lauf()
+    assert inst.phase == "fehler" and "fehlt die unterschriebene Liste" in inst.fehlertext
+    assert not any("--torch-backend" in a for a in aufrufe)  # nichts von PyTorch geladen

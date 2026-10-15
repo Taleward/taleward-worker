@@ -127,11 +127,21 @@ class Sicherung:
 
 # ---------------------------------------------------------------------- Hilfe-Datei
 _V = r"(?<![A-Za-z0-9])"  # statt \b: auch nach „_“ (z. B. „X_hf_…“) greifen
-_NAME = (r"[A-Za-z0-9_.\-]*?(?:token|passwor[dt]|password|passwd|pwd|pass|secret|api[_-]?key|schl(?:ü|ue)ssel|key"
-         r"|credentials?)")  # endet auf ein Schlüsselwort: MISTRAL_API_KEY, client_secret, access_token, SMTP_PASS
+_NAME = (r"[A-Za-z0-9_.\-]*?(?:token|passwor[dt]|password|passwd|passphrase|pwd|pass|secret|api[_-]?key|schl(?:ü|ue)ssel"
+         r"|key|credentials?|cookie|session(?:[_-]?id)?|sid|auth)")  # endet auf ein Schlüsselwort: MISTRAL_API_KEY,
+# client_secret, access_token, SMTP_PASS, session_id, private_key
 _MUSTER = [
-    # Zugangsdaten in Adressen (auch ohne Punkt im Host: http://u:pw@localhost:8000)
-    (re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://)[^/\s:@]+:[^/\s@]*@"), r"\1[Zugang entfernt]@"),
+    # Private Schlüssel als PEM-Block, auch über mehrere Zeilen
+    (re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----"),
+     "[Schlüssel entfernt]"),
+    # Zugangsdaten in Adressen bis zum letzten @ vor dem Host (auch ohne Punkt im Host: http://u:pw@localhost:8000)
+    (re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://)[^/\s?#]*@"), r"\1[Zugang entfernt]@"),
+    # Cookies: die ganze Zeile nach „Cookie:“ bzw. „Set-Cookie:“, und alles nach „Authorization:“
+    (re.compile(r"(?i)((?:set-)?cookie\s*:\s*)[^\n]*"), r"\1[entfernt]"),
+    (re.compile(r"(?i)((?:proxy-)?authorization\s*[:=]\s*)[^\n]*"), r"\1[entfernt]"),
+    # Schlüssel mit bekannter Vorsilbe (GitHub, Slack, AWS)
+    (re.compile(_V + r"(?:gh[pousr]_|github_pat_|xox[abpr]-)[A-Za-z0-9_\-]{8,}"), "[Schlüssel entfernt]"),
+    (re.compile(_V + r"AKIA[0-9A-Z]{16}(?![A-Za-z0-9])"), "[Schlüssel entfernt]"),
     (re.compile(_V + r"wk\.[A-Za-z0-9_.\-]+"), "wk.[entfernt]"),
     (re.compile(_V + r"dpapi:[A-Za-z0-9+/=]+"), "dpapi:[entfernt]"),
     (re.compile(r"(?i)" + _V + r"(bearer|basic|digest|negotiate|ntlm)\s+[A-Za-z0-9_.\-~+/=]+"), r"\1 [entfernt]"),

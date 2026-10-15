@@ -201,7 +201,7 @@ class ServerUpdate:
             # Tausch mittendrin gescheitert – der neue Code lief nie, die Daten sind unberührt
             self.phase = "zurueck"
             try:
-                inst.zurueck(vorher)
+                inst.zurueck(vorher, self.alt)
             except motor.MotorFehler as e:
                 self._protokoll(f"Rückweg des KI-Pakets gescheitert: {e.code} {e.text[-300:]}")
             finally:
@@ -241,7 +241,7 @@ class ServerUpdate:
         try:
             a.dienst.stoppen()
             a.server.stoppen()
-            inst.zurueck(vorher)
+            inst.zurueck(vorher, self.alt)
             if datei is not None:
                 self.sicherung_zurueckspielen(datei)
         finally:

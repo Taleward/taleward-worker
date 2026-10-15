@@ -140,3 +140,29 @@ def test_schwaerzen_weitere_formen():
     for bleibt in ("Version 0.4.102 läuft", "Tests passed: 3, keyboard: de", "TALEWARD_EINZELPLATZ_WORKER_GESCHUETZT=true",
                    "http://localhost:8000/app/"):
         assert mitnehmen.schwaerzen(bleibt) == bleibt, bleibt
+
+
+def test_schwaerzen_cookies_sitzungen_und_vorsilben():
+    from taleward_worker import mitnehmen
+
+    pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjE\nAAAA\n-----END OPENSSH PRIVATE KEY-----"
+    proben = {
+        "set-cookie: session=keks-geheim; Path=/; HttpOnly": "keks-geheim",
+        "Cookie: sid=sitzung-geheim; theme=dunkel": "sitzung-geheim",
+        "Authorization: Token tok-geheim-9": "tok-geheim-9",
+        "passphrase: Lindwurm im Kessel": "Lindwurm",
+        "auth=kurz-geheim und weiter": "kurz-geheim",
+        "session_id=abc-geheim": "abc-geheim",
+        "ghp_abcdefghijklmnopqrstuvwxyzABCD": "ghp_abcdefghij",
+        "github_pat_abcdefghijklmn": "abcdefghijklmn",
+        "xoxb-abcdefghijk": "abcdefghijk",
+        "AKIAABCDEFGHIJKLMNOP": "AKIAABCDEFGHIJKLMNOP",
+        "https://nutzer:p@ss@wort@example.invalid/pfad": "wort",
+        "private_key: abc123geheim": "abc123geheim",
+        pem: "b3BlbnNzaC1rZXktdjE",
+    }
+    for probe, geheim in proben.items():
+        assert geheim not in mitnehmen.schwaerzen(probe), probe
+    assert "example.invalid/pfad" in mitnehmen.schwaerzen("https://nutzer:p@ss@wort@example.invalid/pfad")
+    for bleibt in ("Autor: Rabenfels", "Sitzungsdauer 3 h", "Fassung 0.3.7", "https://taleward.org/hilfe"):
+        assert mitnehmen.schwaerzen(bleibt) == bleibt, bleibt
