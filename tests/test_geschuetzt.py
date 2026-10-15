@@ -57,7 +57,7 @@ def test_worker_schluessel_von_taleward_geschuetzt(windows):
     assert d.worker_token() == "wk.8.klartext"
     pfade.worker_schluessel().write_text("dpapi:QU5ERVJFUg==\n", encoding="utf-8")
     assert d.worker_token() is None
-    assert einzelplatz.MINDEST_SERVER == "0.4.100"
+    assert not __import__("taleward_worker.selbstupdate").selbstupdate.neuer("0.4.100", einzelplatz.MINDEST_SERVER)
 
 
 def test_ohne_funktionierenden_datenschutz_wird_trotzdem_gespeichert(windows, monkeypatch):

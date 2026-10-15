@@ -112,3 +112,30 @@ def ordnergroesse(p: Path) -> int:
             except OSError:
                 pass
     return gesamt
+
+
+def dokumente() -> Path:
+    """Der Ordner „Dokumente“, wie Windows ihn führt (auch wenn OneDrive ihn verlegt hat); sonst ~/Documents bzw. ~."""
+    if WINDOWS:
+        try:
+            import ctypes
+            import uuid
+            from ctypes import wintypes
+
+            kennung = uuid.UUID("FDD39AD0-238F-46AF-ADB4-6C85480369C7")  # FOLDERID_Documents
+            guid = (ctypes.c_ubyte * 16).from_buffer_copy(kennung.bytes_le)
+            zeiger = ctypes.c_wchar_p()
+            shell32 = ctypes.windll.shell32  # type: ignore[attr-defined]
+            shell32.SHGetKnownFolderPath.argtypes = [ctypes.c_void_p, wintypes.DWORD, wintypes.HANDLE,
+                                                     ctypes.POINTER(ctypes.c_wchar_p)]
+            if shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(zeiger)) == 0 and zeiger.value:
+                ordner = Path(zeiger.value)
+                ctypes.windll.ole32.CoTaskMemFree(zeiger)  # type: ignore[attr-defined]
+                if ordner.is_dir():
+                    return ordner
+        except Exception:  # noqa: BLE001 – dann der übliche Ordner
+            pass
+    for ordner in (Path.home() / "Documents", Path.home()):
+        if ordner.is_dir():
+            return ordner
+    return Path.home()

@@ -6,7 +6,7 @@ Programms. Darum:
 - Navigation nur innerhalb von http://localhost:8000 – alles andere öffnet im normalen Browser, Rahmen von anderswo
   werden blockiert;
 - Mikrofon nur für diese Herkunft, alle anderen Berechtigungen abgelehnt;
-- keine Entwicklerwerkzeuge, kein Kontextmenü (nur mit TALEWARD_DEBUG);
+- keine Entwicklerwerkzeuge, kein Kontextmenü (nur mit TALEWARD_DEBUG, das der Nutzer selbst setzt);
 - neue Fenster (`window.open`, Links mit target) öffnet pywebview über `webbrowser.open` – das geht unter Windows an
   `os.startfile` und damit auch an `file:`, UNC-Pfade oder fremde Schemata. `absichern()` lässt darum vor dem Start
   des ersten Fensters nur noch http(s)-Adressen ohne Zugangsdaten durch (für beide Fenster des Programms).
@@ -17,15 +17,48 @@ startet mit einer leeren eigenen Seite; die App wird erst geladen, wenn die Rege
 from __future__ import annotations
 
 import logging
+import os
+import shutil
+import socket
 import sys
 import threading
 import webbrowser
+from pathlib import Path
 from urllib.parse import urlsplit
 
 log = logging.getLogger("taleward_worker")
 HOSTS = ("localhost", "127.0.0.1")
 PORT = 8000
 _ORIGINAL_OEFFNEN = webbrowser.open
+
+
+def freier_anschluss() -> int:
+    """Ein gerade freier Anschluss auf 127.0.0.1 – bei jedem Start ein anderer."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+ZWISCHENSPEICHER = ("Cache", "Code Cache", "GPUCache")
+
+
+def zwischenspeicher_leeren(speicher: Path, fassung: str) -> bool:
+    """Nach einem Fassungswechsel nur den Zwischenspeicher für Seiten im Fensterspeicher leeren. Anmeldung und
+    Aufnahmen der App (Local Storage, IndexedDB) bleiben. Liefert True, wenn geleert wurde."""
+    merker = speicher / "fassung.txt"
+    try:
+        if merker.read_text(encoding="utf-8").strip() == fassung:
+            return False
+    except OSError:
+        pass
+    for ordner in list(speicher.rglob("*")):
+        if ordner.name in ZWISCHENSPEICHER and ordner.is_dir() and not ordner.is_symlink():
+            shutil.rmtree(ordner, ignore_errors=True)
+    try:
+        merker.write_text(fassung, encoding="utf-8")
+    except OSError:
+        pass
+    return True
 
 
 def eigene_seite(uri: str) -> bool:
@@ -148,7 +181,8 @@ def _abdichten(w, form, adresse: str) -> None:
     except AttributeError:  # ältere WebView2: fragt dann selbst nach, bevor sie etwas startet
         log.info("Programmfenster: diese WebView2 kennt LaunchingExternalUriScheme nicht")
     einstellungen = core.Settings
-    einstellungen.AreDevToolsEnabled = False
+    # Entwickleransicht nur, wenn der Nutzer Taleward selbst mit TALEWARD_DEBUG gestartet hat (Fehlersuche)
+    einstellungen.AreDevToolsEnabled = bool(os.environ.get("TALEWARD_DEBUG"))
     einstellungen.IsWebMessageEnabled = True  # pywebview braucht es für Fenstergröße und Ereignisse
     w._taleward_dicht = True
     core.Navigate(adresse)  # erst jetzt die App

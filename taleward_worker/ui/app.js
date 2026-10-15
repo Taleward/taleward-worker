@@ -221,11 +221,19 @@
   function kontoZeigen() {
     const tw = S.taleward || {};
     const bereit = !!tw.kontoMoeglich;
-    $("#konto-wartet").hidden = bereit || !!(tw.zustand && tw.zustand.art === "fehler");
+    const z = tw.zustand || {};
+    $("#konto-wartet").hidden = bereit || z.art === "fehler";
     $("#konto-anlegen").disabled = !bereit || beschaeftigt;
-    if (tw.zustand && tw.zustand.art === "fehler") {
-      const f = $("#konto-fehler"); f.textContent = t("tw_f_" + (tw.zustand.code || "startet_nicht")); f.hidden = false;
+    if (z.art === "fehler") {
+      const f = $("#konto-fehler"); f.textContent = t("tw_f_" + (z.code || "startet_nicht")); f.hidden = false;
+    } else if (z.art === "abgestuerzt") {
+      $("#konto-wartet").textContent = t("tw_abgestuerzt_text", { wann: wann(z.neuerVersuch) });
+    } else {
+      $("#konto-wartet").textContent = t("taleward_startet_noch");
     }
+    // Dauert der Start ungewöhnlich lange oder klappt er nicht: das Protokoll muss erreichbar sein (sonst Sackgasse)
+    const lange = z.art === "startet" && z.seit && Date.now() / 1000 - z.seit > 45;
+    $("#konto-protokoll-zeile").hidden = bereit || !(lange || ["fehler", "abgestuerzt"].includes(z.art));
   }
 
   function talewardZeigen() {
@@ -280,6 +288,9 @@
       fortschritt = z.p || 0;
     } else if (art === "startet" && z.modelle) {
       text = t("st_modelle_text", { mb: gb(z.modelleMb || 0) });
+    } else if (art === "fehler" && z.code === "modell") {
+      titel = t("st_modell");
+      text = t("st_modell_text", { wann: wann(z.neuerVersuch) });
     } else if (art === "fehler") {
       text = z.text || t("f_" + (z.code || "einrichtung"));
     }
@@ -383,6 +394,7 @@
     });
     $("#fuss-version").textContent = "Taleward " + S.version;
     $("#neu-koppeln").hidden = einzelplatz();
+    $("#verwaltung").hidden = !einzelplatz();
     $("#betrieb-jetzt").textContent = einzelplatz() ? t("betrieb_jetzt_einzelplatz")
       : t("betrieb_jetzt_verbunden", { server: serverName() });
     $("#sicherung-karte").hidden = !einzelplatz();

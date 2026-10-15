@@ -93,7 +93,10 @@ class Api:
         return r
 
     def taleward_oeffnen(self) -> dict:
-        return {"ok": self._app.app_fenster_oeffnen()}
+        ok = self._app.app_fenster_oeffnen()
+        if ok:
+            self._app.programm_in_den_hintergrund()  # ein Fenster: die App; das Programm wartet im Infobereich
+        return {"ok": ok}
 
     def im_browser_oeffnen(self) -> None:
         if self._app.server.app_bereit.is_set():
@@ -331,10 +334,7 @@ class Api:
             webbrowser.open(url)
 
     def verwaltung_oeffnen(self) -> None:
-        if self._app.e.einzelplatz:
-            webbrowser.open(einzelplatz.ADRESSE + "/verwaltung")  # nur vom PC selbst erreichbar
-        elif self._app.e.server:
-            webbrowser.open(self._app.e.server.rstrip("/") + "/verwaltung/worker")
+        self._app.verwaltung_oeffnen()
 
     def fenster_verstecken(self) -> None:
         self._app.verstecken()
@@ -440,7 +440,7 @@ class WorkerApp:
         typ = (dialog.SAVE if speichern else dialog.OPEN) if dialog else (
             webview.SAVE_DIALOG if speichern else webview.OPEN_DIALOG)
         try:
-            ordner = str(Path.home() / "Documents") if (Path.home() / "Documents").is_dir() else str(Path.home())
+            ordner = str(pfade.dokumente())
             auswahl = self.fenster.create_file_dialog(typ, directory=ordner, save_filename=name, file_types=arten)
         except Exception as e:  # noqa: BLE001 – kein Dialog möglich
             log.warning("Dateidialog nicht möglich: %s", e)
@@ -508,6 +508,17 @@ class WorkerApp:
             log.warning("Programmfenster nicht möglich: %s", e)
             webbrowser.open(einzelplatz.APP_ADRESSE)
         return True
+
+    def verwaltung_oeffnen(self) -> None:
+        """Nur bei „Alles auf diesem PC“ (dort ist die Spielleitung Verwalter). Beim Verbinden gehört die Verwaltung
+        dem Betreiber des Servers – kein Knopf dafür im Programm."""
+        if self.e.einzelplatz:
+            webbrowser.open(einzelplatz.ADRESSE + "/verwaltung")  # nur vom PC selbst erreichbar
+
+    def programm_in_den_hintergrund(self) -> None:
+        """Nach „Taleward öffnen“: Programmfenster in den Infobereich (ohne Infobereich bleibt es, wie es ist)."""
+        if self.fenster and self.tray is not None:
+            self.verstecken()
 
     def _app_fenster_zu(self) -> None:
         self.app_fenster = None
@@ -790,10 +801,21 @@ class WorkerApp:
         def pause_text(_):
             return (("Fortsetzen" if de else "Resume") if self.e.pausiert else ("Pausieren" if de else "Pause"))
 
+        def app_oeffnen():
+            if self.app_fenster_oeffnen():
+                self.programm_in_den_hintergrund()
+
+        def mit_app() -> bool:
+            return bool(self.e.einzelplatz and self.e.konto_angelegt)
+
         menue = pystray.Menu(
-            pystray.MenuItem("Taleward öffnen" if de else "Open Taleward", lambda: self.app_fenster_oeffnen(),
-                             visible=lambda _: self.e.einzelplatz and self.e.konto_angelegt),
-            pystray.MenuItem("Öffnen" if de else "Open", lambda: self.zeigen(), default=True),
+            # Bei „Alles auf diesem PC“ ist die App das Hauptfenster (Doppelklick), das Programm der zweite Punkt
+            pystray.MenuItem("Taleward öffnen" if de else "Open Taleward", app_oeffnen,
+                             visible=lambda _: mit_app(), default=mit_app()),
+            pystray.MenuItem("Einstellungen und Status" if de else "Settings and status", lambda: self.zeigen(),
+                             default=not mit_app()),
+            pystray.MenuItem("Verwaltung" if de else "Administration", lambda: self.verwaltung_oeffnen(),
+                             visible=lambda _: mit_app()),
             pystray.MenuItem(pause_text, lambda: (self.dienst.pausieren(not self.e.pausiert),
                                                   self.tray_aktualisieren())),
             pystray.Menu.SEPARATOR,
@@ -819,11 +841,28 @@ class WorkerApp:
 
     def _tray_nachfuehren(self) -> None:
         letzte = None
+        hilfe_vorher = False
         while not self._beendet.wait(2):
             jetzt = (self.dienst.zustand.get("art"), self.e.pausiert, round(self.dienst.zustand.get("p") or 0, 1))
             if jetzt != letzte:
                 letzte = jetzt
                 self.tray_aktualisieren()
+            # Braucht etwas Hilfe, kommt das Programmfenster von selbst nach vorn – einmal je Vorfall
+            hilfe = self.braucht_hilfe()
+            if hilfe and not hilfe_vorher:
+                try:
+                    self.zeigen()
+                except Exception:  # noqa: BLE001 – Fenster gibt es (noch) nicht
+                    pass
+            hilfe_vorher = hilfe
+
+    def braucht_hilfe(self) -> bool:
+        """Zustände, die der Nutzer selbst lösen muss. Wartet der Worker nur auf das Sprechermodell, nicht."""
+        z = self.dienst.zustand
+        if z.get("art") == "fehler" and z.get("code") != "modell":
+            return True
+        return bool(self.e.einzelplatz and self._server is not None
+                    and self._server.zustand.get("art") == "fehler")
 
     def run(self) -> None:
         import webview
@@ -853,8 +892,13 @@ class WorkerApp:
         # Aufnahmen bis zum Hochladen. Downloads (Umzugsdatei, „Kapitel teilen“) mit Speichern-Dialog.
         webview.settings["ALLOW_DOWNLOADS"] = True
         webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
+        speicher = pfade.fenster_speicher()
+        fenster.zwischenspeicher_leeren(speicher, VERSION)
+        # Eigener freier Anschluss für die Programmoberfläche: pywebview nähme mit dauerhaftem Speicher sonst immer
+        # denselben (42001) – dann lieferte WebView2 nach einem Update alte Seiten aus dem Zwischenspeicher, und ein
+        # anderes Programm könnte den Anschluss vorher belegen. Die Oberfläche speichert selbst nichts im Browser.
         webview.start(debug=bool(os.environ.get("TALEWARD_DEBUG")), private_mode=False,
-                      storage_path=str(pfade.fenster_speicher()))
+                      storage_path=str(speicher), http_port=fenster.freier_anschluss())
         self._beendet.set()
         self.dienst.stoppen()
         if self._server is not None:

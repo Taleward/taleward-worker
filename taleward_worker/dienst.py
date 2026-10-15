@@ -21,6 +21,7 @@ from taleward_worker.einstellungen import Einstellungen
 VORSILBE = "@@taleward "
 WARTEZEITEN = [5, 15, 60, 300]      # Neustart nach Absturz
 ERNEUT_NACH_EINRICHTUNGSFEHLER = 600
+ERNEUT_WENN_MODELL_FEHLT = 60  # Sprechermodell noch nicht auf dem Server (lädt er gerade): bald wieder nachsehen
 
 
 class Wachhalten:
@@ -329,8 +330,9 @@ class Dienst:
                 self._setzen("fehler", code="motor_kaputt", text=letzter_fehler)
                 self._soll_laufen = False
             elif art == "fehler":  # Einrichtungsfehler (z. B. Modell fehlt auf dem Server): später erneut
-                self._neustart_um = time.monotonic() + ERNEUT_NACH_EINRICHTUNGSFEHLER
-                self.zustand["neuerVersuch"] = time.time() + ERNEUT_NACH_EINRICHTUNGSFEHLER
+                warte = ERNEUT_WENN_MODELL_FEHLT if self.zustand.get("code") == "modell" else ERNEUT_NACH_EINRICHTUNGSFEHLER
+                self._neustart_um = time.monotonic() + warte
+                self.zustand["neuerVersuch"] = time.time() + warte
             else:
                 warte = WARTEZEITEN[min(self._versuche, len(WARTEZEITEN) - 1)]
                 self._versuche += 1
@@ -416,7 +418,9 @@ class Dienst:
         elif art == "abgelehnt":
             self._setzen("abgelehnt")
         elif art == "fehler":
-            self._setzen("fehler", code="einrichtung", text=e.get("message", ""))
+            text = e.get("message", "")
+            # Fehlt nur das Sprechermodell auf dem Server, kommt es oft gleich (der Server lädt es) – kein Fehler des PCs
+            self._setzen("fehler", code="modell" if "Sprechermodell" in text else "einrichtung", text=text)
             self.protokoll.schreiben(f"Fehler: {e.get('message')}")
 
     def _ruhezustand(self) -> str:
