@@ -1,0 +1,48 @@
+From a386087be9205da5ca091a625594e4c1e048221d Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Thu, 15 Oct 2026 07:15:55 +0200
+Subject: [PATCH 43/43] Worker 0.3.5
+
+---
+ pyproject.toml              | 2 +-
+ taleward_worker/__init__.py | 2 +-
+ uv.lock                     | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/pyproject.toml b/pyproject.toml
+index 807a14a..1c5729b 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-worker"
+-version = "0.3.4"
++version = "0.3.5"
+ description = "Taleward Worker – verarbeitet Aufnahmen für einen Taleward-Server auf dem eigenen PC mit Grafikkarte"
+ license = "AGPL-3.0-only"
+diff --git a/taleward_worker/__init__.py b/taleward_worker/__init__.py
+index 14c8a97..12e3595 100644
+--- a/taleward_worker/__init__.py
++++ b/taleward_worker/__init__.py
+@@ -4,5 +4,5 @@ Die App selbst ist klein. Das KI-Paket (Taleward-Server mit WhisperX, einige GB)
+ passender Fassung zum verbundenen Server und startet es als Unterprozess („chronik worker --app“).
+ """
+-VERSION = "0.3.4"
++VERSION = "0.3.5"
+ REPO = "Taleward/taleward-server"        # Server-Code = KI-Paket (engine-requirements.txt, Tags v…)
+ APP_REPO = "Taleward/taleward-worker"   # diese App
+diff --git a/uv.lock b/uv.lock
+index 43636df..bf42d9d 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -677,5 +677,5 @@ wheels = [
+ [[package]]
+ name = "taleward-worker"
+-version = "0.3.4"
++version = "0.3.5"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
