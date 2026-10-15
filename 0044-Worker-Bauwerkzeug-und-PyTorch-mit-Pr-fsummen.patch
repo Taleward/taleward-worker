@@ -1,0 +1,436 @@
+From 54e3299a2c311353d654dd3d61c74ff861e35112 Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Thu, 15 Oct 2026 08:45:21 +0200
+Subject: [PATCH 44/45] =?UTF-8?q?Worker:=20Bauwerkzeug=20und=20PyTorch=20m?=
+ =?UTF-8?q?it=20Pr=C3=BCfsummen?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ README.md                 |   6 +-
+ taleward_worker/motor.py  | 152 ++++++++++++++++++++++++++++++++++----
+ tests/test_pruefsummen.py | 108 +++++++++++++++++++++++++--
+ tests/test_robustheit.py  |   8 +-
+ tests/test_worker_app.py  |   6 +-
+ 5 files changed, 254 insertions(+), 26 deletions(-)
+
+diff --git a/README.md b/README.md
+index d18e13e..d4e4abf 100644
+--- a/README.md
++++ b/README.md
+@@ -85,6 +85,8 @@ QR-Code bei.
+ - **Immer passend zum Server:** Das KI-Paket wird in genau der Fassung des Servers installiert (der freigegebene Commit
+   zum Git-Tag `v<Fassung>` im Server-Repository) und zieht nach einem Server-Update selbst nach. Die Pakete kommen mit
+-  den Prüfsummen aus `uv.lock` dieses Commits (`--require-hashes`); nur PyTorch selbst (torch, torchaudio,
+-  torchvision) kommt in der Variante für die Grafikkarte auf eine feste Version festgelegt, ohne Prüfsumme.
++  den Prüfsummen aus `uv.lock` dieses Commits (`--require-hashes`). PyTorch selbst (torch, torchaudio, torchvision)
++  kommt in der Variante für die Grafikkarte mit den Prüfsummen aus `pytorch-pruefsummen.txt`, die mit der Freigabe
++  unterschrieben ist (ältere Fassungen ohne diese Liste: nur auf die Version festgelegt). Gebaut wird der
++  Taleward-Code mit einem Bauwerkzeug mit festen Prüfsummen, ohne weitere Downloads.
+ - **Updates über den eigenen Server:** Die App fragt nur ihren Taleward-Server nach neuen Fassungen. Unter
+   Windows installiert sie sie still, sobald sie nichts zu tun hat; unter Linux über `uv tool install`. Abschaltbar in
+diff --git a/taleward_worker/motor.py b/taleward_worker/motor.py
+index a1f716d..87d9997 100644
+--- a/taleward_worker/motor.py
++++ b/taleward_worker/motor.py
+@@ -6,8 +6,11 @@ Der Motor ist der Taleward-Server-Code in genau der Fassung des verbundenen Serv
+ 1. Python 3.11 (von uv verwaltet, unabhängig von einem installierten Python)
+ 2. Pakete in genau den Versionen aus uv.lock der passenden Fassung – mit Prüfsummen: uv lädt nur Dateien, deren
+-   Prüfsumme in uv.lock dieses (freigegebenen) Commits steht (--require-hashes). Ausgenommen sind torch, torchaudio
+-   und torchvision: Die kommen in der Variante für die Grafikkarte vom PyTorch-Verzeichnis (uv --torch-backend), für
+-   diese Dateien stehen keine Prüfsummen in uv.lock; sie sind auf die Version festgelegt.
+-3. der Taleward-Code selbst (ohne Abhängigkeiten, die kamen aus Schritt 2) und ffmpeg (imageio-ffmpeg)
++   Prüfsumme in uv.lock dieses (freigegebenen) Commits steht (--require-hashes). torch, torchaudio und torchvision
++   kommen in der Variante für die Grafikkarte vom PyTorch-Verzeichnis (uv --torch-backend); ihre Prüfsummen stehen
++   in `pytorch-pruefsummen.txt` am Release, die Freigabe nennt deren SHA-256. Ältere Fassungen ohne diese Liste:
++   PyTorch nur auf die Version festgelegt (steht dann im Protokoll).
++3. der Taleward-Code selbst (ohne Abhängigkeiten, die kamen aus Schritt 2) und ffmpeg (imageio-ffmpeg). Gebaut wird
++   er mit dem Bauwerkzeug aus BAUWERKZEUG (feste Prüfsummen, vorher in die Umgebung installiert) – ohne Zugriff auf
++   ein Paketverzeichnis (--no-build-isolation --no-index).
+ 
+ Im Testmodus reicht der Taleward-Code mit den Grundpaketen (ein paar MB statt einiger GB), ebenfalls mit Prüfsummen.
+@@ -90,5 +93,5 @@ def quelle(fassung: str) -> dict:
+     except freigabe.FreigabeFehler as e:
+         raise MotorFehler("nicht_freigegeben", str(e)) from None
+-    return _adressen(tag, f.commit)
++    return _adressen(tag, f.commit, f.dateien)
+ 
+ 
+@@ -139,7 +142,8 @@ def neueste_fassung(klient: httpx.Client | None = None, mindestens: str | None =
+ 
+ 
+-def _adressen(tag: str, commit: str) -> dict:
++def _adressen(tag: str, commit: str, dateien: dict[str, str] | None = None) -> dict:
+     roh = f"https://raw.githubusercontent.com/{REPO}/{commit}"
+-    return {"ref": tag, "genau": True, "commit": commit,
++    return {"ref": tag, "genau": True, "commit": commit, "anhaenge": dict(dateien or {}),
++            "release": f"https://github.com/{REPO}/releases/download/{tag}",
+             "paket": f"https://github.com/{REPO}/archive/{commit}.zip",
+             "anforderungen": f"{roh}/engine-requirements.txt",
+@@ -165,4 +169,5 @@ class Installation:
+     alt_behalten: bool = False    # Update „Alles auf diesem PC“: alten Motor bis zur Prüfung als motor-alt behalten
+     weg: str = ""                 # gross (neuer Ordner), gleich/klein (im vorhandenen Motor) – für den Rückweg
++    pytorch_geprueft: bool = False  # PyTorch mit Prüfsummen aus der Liste am Release
+     _prozess: subprocess.Popen | None = None
+     _abbrechen: threading.Event = field(default_factory=threading.Event)
+@@ -286,8 +291,10 @@ class Installation:
+         if pytorch:
+             torch = "cpu" if self.backend == "cpu" else TORCH_BACKEND
+-            self._uv("pip", "install", "--python", py, "--no-deps", "--torch-backend", torch, "-r", str(pytorch),
++            self._uv("pip", "install", "--python", py, "--no-deps", "--torch-backend", torch,
++                     *(["--require-hashes"] if self.pytorch_geprueft else []), "-r", str(pytorch),
+                      anteil_von=0.5, anteil_bis=0.9, erwartet_mb=self.erwartet_mb // 2)
+         self.phase = "taleward"
+-        self._uv("pip", "install", "--python", py, "--no-deps", q["paket"], anteil_von=0.9, anteil_bis=0.95)
++        self._bauwerkzeug(py)
++        self._taleward_einspielen(py, q, anteil_von=0.9, anteil_bis=0.95)
+ 
+         self.phase = "ffmpeg"
+@@ -330,6 +337,6 @@ class Installation:
+ 
+     def _listen(self, q: dict) -> tuple[Path, Path | None]:
+-        """Paketlisten aus uv.lock der Fassung: (mit Prüfsummen, PyTorch-Familie ohne). Im Testmodus nur die
+-        Grundpakete und ffmpeg, ohne PyTorch."""
++        """Paketlisten aus uv.lock der Fassung: (mit Prüfsummen, PyTorch-Familie – mit Prüfsummen aus der Liste am
++        Release, sonst nur auf die Version festgelegt). Im Testmodus nur die Grundpakete und ffmpeg, ohne PyTorch."""
+         ordner = pfade.basis() / "cache"
+         ordner.mkdir(parents=True, exist_ok=True)
+@@ -347,7 +354,36 @@ class Installation:
+         if not pytorch.strip():
+             return ordner / "geprueft.txt", None
++        liste = pytorch_pruefsummen(q)
++        if liste is None:
++            self.pytorch_geprueft = False
++            self.zeilen.append("PyTorch ohne eigene Prüfsummen (diese Fassung hat noch keine Liste) – nur die Version "
++                               "ist festgelegt.")
++        else:
++            pytorch = pytorch_mit_pruefsummen(pytorch, liste, "cpu" if self.backend == "cpu" else TORCH_BACKEND)
++            self.pytorch_geprueft = True
+         (ordner / "pytorch.txt").write_text(pytorch, encoding="utf-8")
+         return ordner / "geprueft.txt", ordner / "pytorch.txt"
+ 
++    # ------------------------------------------------------------------ Taleward-Code
++    def _bauwerkzeug(self, py: str) -> None:
++        """Bauwerkzeug mit festen Prüfsummen in die Umgebung – nur, was dort noch fehlt (vorhandene Pakete kommen aus
++        uv.lock und bleiben in deren Fassung)."""
++        vorhanden = installierte_pakete(py, self._umgebung())
++        fehlt = [block for name, block in eintraege(BAUWERKZEUG) if name not in vorhanden]
++        if not fehlt:
++            return
++        datei = pfade.basis() / "cache" / "bauwerkzeug.txt"
++        datei.parent.mkdir(parents=True, exist_ok=True)
++        datei.write_text("\n".join(fehlt) + "\n", encoding="utf-8")
++        self._uv("pip", "install", "--python", py, "--no-deps", "--require-hashes", "-r", str(datei),
++                 anteil_von=self.anteil, anteil_bis=self.anteil)
++
++    def _taleward_einspielen(self, py: str, q: dict, anteil_von: float, anteil_bis: float,
++                             neu: bool = False) -> None:
++        """Den Taleward-Code (Commit der Freigabe) bauen und installieren: ohne Abhängigkeiten, ohne Bau-Umgebung
++        und ohne Paketverzeichnis – es läuft nur das Bauwerkzeug mit bekannter Prüfsumme."""
++        self._uv("pip", "install", "--python", py, "--no-deps", "--no-build-isolation", "--no-index",
++                 *(["--reinstall"] if neu else []), q["paket"], anteil_von=anteil_von, anteil_bis=anteil_bis)
++
+     # ------------------------------------------------------------------ Schneller Weg bei neuer Serverfassung
+     def _nur_taleward_noetig(self, q: dict) -> bool:
+@@ -392,4 +428,5 @@ class Installation:
+         py = str(pfade.motor_python())
+         geprueft = self._listen(q)[0] if zusatz else None  # vorher: braucht das Netz, der Worker läuft noch
++        self._bauwerkzeug(py)  # stört den laufenden Worker nicht (wird nur beim Bauen gebraucht)
+         if callable(self.vor_tausch):
+             self.vor_tausch()  # laufenden Worker anhalten (nur für wenige Sekunden)
+@@ -400,6 +437,5 @@ class Installation:
+                          anteil_von=0.1, anteil_bis=0.6)
+                 self.phase = "taleward"
+-            self._uv("pip", "install", "--python", py, "--no-deps", "--reinstall", q["paket"],
+-                     anteil_von=0.6 if zusatz else 0.1, anteil_bis=0.9)
++            self._taleward_einspielen(py, q, anteil_von=0.6 if zusatz else 0.1, anteil_bis=0.9, neu=True)
+             pruefung = _python_pruefen(py, "import app, sys; print('ok')")
+             if "ok" not in pruefung.stdout:
+@@ -634,4 +670,94 @@ IMAGEIO_FFMPEG = """imageio-ffmpeg==0.6.0 \\
+ 
+ 
++# Bauwerkzeug für den Taleward-Code ([build-system] im Server: hatchling) mit seinen Abhängigkeiten, Python 3.11.
++# Fest mit Prüfsummen, damit beim Bauen nichts Ungeprüftes von PyPI läuft. Neu erzeugen mit:
++#   echo hatchling | uv pip compile - --generate-hashes --universal --python-version 3.11 --no-header --no-annotate
++BAUWERKZEUG = """hatchling==1.32.4 \\
++    --hash=sha256:08ecf7548fb48205e7f213d70c71e67b8271b7242093dc3f1da578b42c734a2c \\
++    --hash=sha256:c4468f73144c054d2aab4ef0f0378c43b9878bf07f8ffd6b79690e970d375f07
++packaging==26.3 \\
++    --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \\
++    --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
++pathspec==1.1.1 \\
++    --hash=sha256:17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a \\
++    --hash=sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189
++pluggy==1.6.0 \\
++    --hash=sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3 \\
++    --hash=sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746
++tomlkit==0.15.1 \\
++    --hash=sha256:177a05aece5a8ca5266fd3c448abb47b8d352f09d477d3ca8332db4d89b24304 \\
++    --hash=sha256:e25bbf38843005246210a12982776f27f99cb9be67160e14434d0c0d21ee1e97
++trove-classifiers==2026.9.21.13 \\
++    --hash=sha256:0a9ebc8d4e2f3e8a22848c5258033035bec17a3012ac3fea16dbaa764489eb71 \\
++    --hash=sha256:8b1ff4f9c191b1040b71c37f1e445ab99732911e3cd91de52838453a854d7a17
++"""
++
++PYTORCH_LISTE = "pytorch-pruefsummen.txt"
++MAX_PYTORCH_LISTE = 256 * 1024
++_PYTORCH_ZEILE = re.compile(r"^([a-z0-9]+) ([a-z0-9_.-]+)==([A-Za-z0-9.+!]+)((?: --hash=sha256:[0-9a-f]{64})+)$")
++
++
++def installierte_pakete(py: str, umgebung: dict) -> set[str]:
++    """Namen der Pakete in einer Umgebung (klein geschrieben, „_“ als „-“)."""
++    try:
++        r = subprocess.run([uv_programm(), "pip", "list", "--python", py, "--format", "json"], capture_output=True,
++                           text=True, encoding="utf-8", errors="replace", timeout=120,
++                           env={**umgebung, "PYTHONUTF8": "1"}, cwd=pfade.basis(), **_ohne_fenster())
++        liste = json.loads(r.stdout or "[]") if r.returncode == 0 else []
++    except (OSError, subprocess.SubprocessError, ValueError):
++        liste = []
++    return {str(p.get("name", "")).lower().replace("_", "-") for p in liste if isinstance(p, dict)}
++
++
++def pytorch_pruefsummen(q: dict) -> dict[tuple[str, str, str], str] | None:
++    """Liste `pytorch-pruefsummen.txt` am Release laden – nur, wenn die (unterschriebene) Freigabe sie mit SHA-256
++    nennt, und nur, wenn die Datei genau dazu passt. → {(Variante, Paket, volle Fassung): „--hash=… …“}.
++    None: Die Freigabe nennt keine Liste (ältere Fassung oder Entwicklung)."""
++    import hashlib
++
++    erwartet = (q.get("anhaenge") or {}).get(PYTORCH_LISTE)
++    if not erwartet or not q.get("release"):
++        return None
++    try:
++        with httpx.Client(timeout=30, follow_redirects=True, headers={"User-Agent": f"TalewardWorker/{VERSION}"}) as k:
++            r = k.get(f"{q['release']}/{PYTORCH_LISTE}")
++    except httpx.HTTPError as e:
++        raise MotorFehler(_netzcode(e)) from None
++    if r.status_code != 200 or len(r.content) > MAX_PYTORCH_LISTE:
++        raise MotorFehler("installation", f"{PYTORCH_LISTE}: HTTP {r.status_code}")
++    if hashlib.sha256(r.content).hexdigest() != erwartet:
++        raise MotorFehler("installation", f"{PYTORCH_LISTE} passt nicht zur Freigabe.")
++    return pytorch_liste_lesen(r.content.decode("utf-8"))
++
++
++def pytorch_liste_lesen(text: str) -> dict[tuple[str, str, str], str]:
++    liste: dict[tuple[str, str, str], str] = {}
++    for zeile in text.splitlines():
++        if not zeile.strip() or zeile.startswith("#"):
++            continue
++        m = _PYTORCH_ZEILE.match(zeile.strip())
++        if not m:
++            raise MotorFehler("installation", f"{PYTORCH_LISTE} ist nicht lesbar.")
++        liste[(m.group(1), m.group(2), m.group(3))] = m.group(4).strip()
++    return liste
++
++
++def pytorch_mit_pruefsummen(pytorch: str, liste: dict[tuple[str, str, str], str], variante: str) -> str:
++    """„torch==2.8.0 ; Bedingung“ → „torch==2.8.0+cu128 ; Bedingung --hash=…“. uv prüft Prüfsummen nur gegen die volle
++    Fassung (mit „+cu128“), deshalb steht sie in der Anforderung. Fehlt ein Eintrag: keine Installation."""
++    zeilen = []
++    for zeile in pytorch.splitlines():
++        if not zeile.strip():
++            continue
++        anforderung, _, bedingung = zeile.partition(";")
++        name, _, fassung = anforderung.strip().partition("==")
++        voll = f"{fassung}+{variante}"
++        hashes = liste.get((variante, name.lower(), voll))
++        if not hashes:
++            raise MotorFehler("installation", f"Keine Prüfsumme für {name} {voll} in {PYTORCH_LISTE}.")
++        zeilen.append(f"{name}=={voll}" + (f" ; {bedingung.strip()}" if bedingung.strip() else "") + f" {hashes}")
++    return "\n".join(zeilen) + "\n"
++
++
+ def pruefsummen(q: dict, umgebung: dict, ordner: Path) -> tuple[str, str]:
+     """pyproject.toml und uv.lock genau des freigegebenen Commits laden und daraus mit uv die Paketlisten mit
+diff --git a/tests/test_pruefsummen.py b/tests/test_pruefsummen.py
+index 6e45a52..5e7b3ec 100644
+--- a/tests/test_pruefsummen.py
++++ b/tests/test_pruefsummen.py
+@@ -4,4 +4,5 @@ import subprocess
+ from pathlib import Path
+ 
++import httpx
+ import pytest
+ 
+@@ -9,4 +10,5 @@ from taleward_worker.motor import pruefsummen as ECHTE_PRUEFSUMMEN  # vor dem Er
+ 
+ DATEN = Path(__file__).parent / "daten" / "kleines-projekt"
++_ECHTER_KLIENT = httpx.Client
+ 
+ 
+@@ -50,8 +52,9 @@ def test_pruefsummen_aufteilen():
+ 
+ 
+-def _grosse_installation(monkeypatch, testmodus=False, backend="cuda"):
++def _grosse_installation(monkeypatch, testmodus=False, backend="cuda", q=None, vorhanden=(), fehler=False):
+     from taleward_worker import motor
+ 
+-    monkeypatch.setattr(motor, "quelle", lambda f: {"ref": f"v{f}", "genau": True, "paket": "paket.zip"})
++    monkeypatch.setattr(motor, "quelle", lambda f: q or {"ref": f"v{f}", "genau": True, "paket": "paket.zip"})
++    monkeypatch.setattr(motor, "installierte_pakete", lambda py, umgebung: set(vorhanden))
+     monkeypatch.setattr(motor, "installiert", lambda: None)
+     monkeypatch.setattr(motor, "ffmpeg_einrichten", lambda py: None)
+@@ -70,4 +73,7 @@ def _grosse_installation(monkeypatch, testmodus=False, backend="cuda"):
+     inst = motor.Installation("0.4.100", testmodus=testmodus, backend=backend)
+     inst._lauf()
++    if fehler:
++        assert inst.phase == "fehler"
++        return inst
+     assert inst.phase == "fertig", inst.fehlertext
+     return [x for x in aufrufe if x[0][0] == "pip"]
+@@ -76,10 +82,35 @@ def _grosse_installation(monkeypatch, testmodus=False, backend="cuda"):
+ def test_ki_paket_mit_pruefsummen(monkeypatch):
+     pip = _grosse_installation(monkeypatch)
+-    (a1, l1), (a2, l2), (a3, _) = pip
++    (a1, l1), (a2, l2), (a3, l3), (a4, _) = pip
+     assert "--require-hashes" in a1 and "--torch-backend" not in a1 and "--no-deps" in a1
+     assert "six==1.17.0" in l1 and "torch" not in l1
+     assert "imageio-ffmpeg==0.6.0" in l1 and l1.count("--hash=") == 8  # fehlte in uv.lock → feste Fassung
+     assert a2[a2.index("--torch-backend") + 1] == "cu128" and l2.strip() == "torch==2.8.0" and "--no-deps" in a2
+-    assert a3[-1] == "paket.zip" and "--no-deps" in a3
++    assert "--require-hashes" not in a2  # Fassung ohne Liste am Release: wie bisher
++    _bauwerkzeug_und_taleward(a3, l3, a4)
++
++
++def _bauwerkzeug_und_taleward(a3, l3, a4, ohne=()):
++    from taleward_worker import motor
++
++    assert "--require-hashes" in a3 and "--no-deps" in a3
++    namen = [n for n, _ in motor.eintraege(l3)]
++    assert "hatchling" in namen and not set(ohne) & set(namen)
++    assert l3.count("--hash=") == sum(b.count("--hash=") for n, b in motor.eintraege(motor.BAUWERKZEUG) if n in namen)
++    # der Taleward-Code: gebaut nur mit dem geprüften Bauwerkzeug, nichts aus einem Paketverzeichnis
++    assert a4[-1] == "paket.zip" and {"--no-deps", "--no-build-isolation", "--no-index"} <= set(a4)
++
++
++def test_bauwerkzeug_nur_was_fehlt(monkeypatch):
++    pip = _grosse_installation(monkeypatch, vorhanden=("packaging", "pluggy"))
++    (_, _), (_, _), (a3, l3), (a4, _) = pip
++    _bauwerkzeug_und_taleward(a3, l3, a4, ohne=("packaging", "pluggy"))
++    from taleward_worker import motor
++
++    alles = {n for n, _ in motor.eintraege(motor.BAUWERKZEUG)}
++    pip = _grosse_installation(monkeypatch, vorhanden=alles)
++    assert len(pip) == 3 and "--no-build-isolation" in pip[-1][0]  # alles da: kein zusätzlicher Aufruf
++    for _, block in motor.eintraege(motor.BAUWERKZEUG):
++        assert "==" in block.splitlines()[0] and block.count("--hash=sha256:") >= 1
+ 
+ 
+@@ -88,12 +119,12 @@ def test_testmodus_mit_pruefsummen(monkeypatch):
+ 
+     pip = _grosse_installation(monkeypatch, testmodus=True)
+-    (a1, l1), (a2, _) = pip
++    (a1, l1), (a2, l2), (a3, _) = pip
+     assert "--require-hashes" in a1 and "torch" not in l1 and "imageio-ffmpeg" in l1
+-    assert a2[-1] == "paket.zip" and "--no-deps" in a2  # keine ungeprüften Abhängigkeiten mehr
++    _bauwerkzeug_und_taleward(a2, l2, a3)  # keine ungeprüften Abhängigkeiten, auch beim Bauen nicht
+     # steht imageio-ffmpeg in uv.lock, gilt dessen Eintrag
+     eigen = "imageio-ffmpeg==0.7.0 \\\n    --hash=sha256:" + "d" * 64 + "\n"
+     monkeypatch.setattr(motor, "pruefsummen", lambda q, umgebung, ordner: (
+         "six==1.17.0 \\\n    --hash=sha256:" + "a" * 64 + "\n", eigen))
+-    (a1, l1), _ = _grosse_installation(monkeypatch, testmodus=True)
++    (a1, l1), *_ = _grosse_installation(monkeypatch, testmodus=True)
+     assert "imageio-ffmpeg==0.7.0" in l1 and "0.6.0" not in l1
+ 
+@@ -104,2 +135,65 @@ def test_quelle_nennt_projekt_und_lock():
+     q = motor._adressen("v0.4.100", "a" * 40)
+     assert q["lock"].endswith(f"/{'a' * 40}/uv.lock") and q["projekt"].endswith(f"/{'a' * 40}/pyproject.toml")
++
++
++# ---------------------------------------------------------------- PyTorch mit Prüfsummen aus der Liste am Release
++_LISTE = ("# Prüfsummen\n"
++          f"cu128 torch==2.8.0+cu128 --hash=sha256:{'a' * 64} --hash=sha256:{'b' * 64}\n"
++          f"cpu torch==2.8.0+cpu --hash=sha256:{'c' * 64}\n"
++          f"cpu torch==2.8.0 --hash=sha256:{'d' * 64}\n")
++
++
++def _release(monkeypatch, inhalt: bytes, sha: str | None = None):
++    import hashlib
++
++    from taleward_worker import motor
++
++    geholt = []
++
++    def antwort(anfrage):
++        geholt.append(str(anfrage.url))
++        return httpx.Response(200, content=inhalt)
++    monkeypatch.setattr(motor.httpx, "Client",
++                        lambda **k: _ECHTER_KLIENT(transport=httpx.MockTransport(antwort), **k))
++    return {"ref": "v0.4.103", "genau": True, "paket": "paket.zip",
++            "release": "https://github.com/Taleward/taleward-server/releases/download/v0.4.103",
++            "anhaenge": {"pytorch-pruefsummen.txt": sha or hashlib.sha256(inhalt).hexdigest()}}, geholt
++
++
++def test_pytorch_mit_pruefsummen_aus_der_freigabe(monkeypatch):
++    q, geholt = _release(monkeypatch, _LISTE.encode())
++    pip = _grosse_installation(monkeypatch, q=q)
++    a2, l2 = pip[1]
++    assert "--require-hashes" in a2 and a2[a2.index("--torch-backend") + 1] == "cu128"
++    assert l2.strip() == f"torch==2.8.0+cu128 --hash=sha256:{'a' * 64} --hash=sha256:{'b' * 64}"
++    assert geholt == ["https://github.com/Taleward/taleward-server/releases/download/v0.4.103/pytorch-pruefsummen.txt"]
++    q, _ = _release(monkeypatch, _LISTE.encode())
++    a2, l2 = _grosse_installation(monkeypatch, q=q, backend="cpu")[1]
++    assert l2.strip() == f"torch==2.8.0+cpu --hash=sha256:{'c' * 64}" and "--require-hashes" in a2
++
++
++def test_pytorch_liste_muss_zur_freigabe_passen(monkeypatch):
++    q, _ = _release(monkeypatch, _LISTE.encode(), sha="e" * 64)  # ausgetauschte Liste
++    inst = _grosse_installation(monkeypatch, q=q, fehler=True)
++    assert "passt nicht zur Freigabe" in inst.fehlertext
++    q, _ = _release(monkeypatch, _LISTE.replace("cu128 torch", "cu126 torch").encode())  # Variante fehlt
++    inst = _grosse_installation(monkeypatch, q=q, fehler=True)
++    assert "Keine Prüfsumme für torch 2.8.0+cu128" in inst.fehlertext
++    q, _ = _release(monkeypatch, b"cu128 torch==2.8.0+cu128 --hash=md5:abc\n")  # unlesbar
++    assert "nicht lesbar" in _grosse_installation(monkeypatch, q=q, fehler=True).fehlertext
++
++
++def test_pytorch_mit_bedingung():
++    from taleward_worker import motor
++
++    liste = motor.pytorch_liste_lesen(f"cu128 torchvision==0.23.0+cu128 --hash=sha256:{'f' * 64}\n")
++    zeile = motor.pytorch_mit_pruefsummen("torchvision==0.23.0 ; sys_platform == 'win32'\n", liste, "cu128")
++    assert zeile == f"torchvision==0.23.0+cu128 ; sys_platform == 'win32' --hash=sha256:{'f' * 64}\n"
++
++
++def test_quelle_reicht_die_anhaenge_der_freigabe_weiter():
++    from taleward_worker import motor
++
++    q = motor._adressen("v0.4.103", "a" * 40, {"pytorch-pruefsummen.txt": "b" * 64})
++    assert q["anhaenge"] == {"pytorch-pruefsummen.txt": "b" * 64}
++    assert q["release"].endswith("/releases/download/v0.4.103")
+diff --git a/tests/test_robustheit.py b/tests/test_robustheit.py
+index 3c9d572..08494c7 100644
+--- a/tests/test_robustheit.py
++++ b/tests/test_robustheit.py
+@@ -271,7 +271,9 @@ def test_kleine_bibliotheksaenderung_geht_in_den_vorhandenen_motor(eigener_ordne
+     assert inst.phase == "fertig" and motor.installiert()["fassung"] == "0.4.20"
+     # kleine Pakete nur mit Prüfsummen, nie über das PyTorch-Verzeichnis
+-    assert len(uv) == 2 and "-r" in uv[0] and "--require-hashes" in uv[0] and "--torch-backend" not in uv[0]
+-    assert "--reinstall" in uv[1]
+-    assert "--hash=sha256:" in listen[0] and "torch" not in listen[0]
++    # (davor das Bauwerkzeug mit Prüfsummen, danach der Code ohne Paketverzeichnis)
++    assert len(uv) == 3 and "--require-hashes" in uv[0] and "hatchling==" in listen[0]
++    assert "-r" in uv[1] and "--require-hashes" in uv[1] and "--torch-backend" not in uv[1]
++    assert "--reinstall" in uv[2] and "--no-build-isolation" in uv[2] and "--no-index" in uv[2]
++    assert "--hash=sha256:" in listen[1] and "torch" not in listen[1]
+ 
+     # torch dabei → vollständige Installation
+diff --git a/tests/test_worker_app.py b/tests/test_worker_app.py
+index f97ed87..d520f82 100644
+--- a/tests/test_worker_app.py
++++ b/tests/test_worker_app.py
+@@ -302,5 +302,9 @@ def test_neue_serverfassung_tauscht_nur_den_code(eigener_ordner, monkeypatch):
+     inst._lauf()
+     assert inst.phase == "fertig" and schritte == ["vor", "nach"]
+-    assert uv == [("pip", "install", "--python", str(py), "--no-deps", "--reinstall", "paket.zip")]
++    # erst das Bauwerkzeug mit Prüfsummen (noch vor dem Anhalten), dann der Code – ohne Paketverzeichnis gebaut
++    assert uv == [("pip", "install", "--python", str(py), "--no-deps", "--require-hashes", "-r",
++                   str(pfade.basis() / "cache" / "bauwerkzeug.txt")),
++                  ("pip", "install", "--python", str(py), "--no-deps", "--no-build-isolation", "--no-index",
++                   "--reinstall", "paket.zip")]
+     assert motor.installiert()["fassung"] == "0.4.14"
+ 
+-- 
+2.43.0
+
