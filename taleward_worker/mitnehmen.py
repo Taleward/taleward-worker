@@ -145,6 +145,8 @@ _MUSTER = [
     (re.compile(_V + r"wk\.[A-Za-z0-9_.\-]+"), "wk.[entfernt]"),
     (re.compile(_V + r"dpapi:[A-Za-z0-9+/=]+"), "dpapi:[entfernt]"),
     (re.compile(r"(?i)" + _V + r"(bearer|basic|digest|negotiate|ntlm)\s+[A-Za-z0-9_.\-~+/=]+"), r"\1 [entfernt]"),
+    # „Token abc…“ ohne Kopfzeile davor – nur Werte, die nach Schlüssel aussehen (ab 8 Zeichen, mit Ziffer)
+    (re.compile(r"(?i)" + _V + r"(token)\s+(?=[A-Za-z0-9_.\-~+/=]*\d)[A-Za-z0-9_.\-~+/=]{8,}"), r"\1 [entfernt]"),
     (re.compile(_V + r"eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]*)?"), "[JWT entfernt]"),
     (re.compile(_V + r"hf_[A-Za-z0-9]{8,}"), "hf_[entfernt]"),
     (re.compile(_V + r"(?:sk|pk|rk)-[A-Za-z0-9_\-]{8,}"), "[Schlüssel entfernt]"),

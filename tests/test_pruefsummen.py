@@ -85,8 +85,9 @@ def test_ki_paket_mit_pruefsummen(monkeypatch):
     assert "--require-hashes" in a1 and "--torch-backend" not in a1 and "--no-deps" in a1
     assert "six==1.17.0" in l1 and "torch" not in l1
     assert "imageio-ffmpeg==0.6.0" in l1 and l1.count("--hash=") == 8  # fehlte in uv.lock → feste Fassung
-    assert a2[a2.index("--torch-backend") + 1] == "cu128" and l2.strip() == "torch==2.8.0" and "--no-deps" in a2
-    assert "--require-hashes" not in a2  # Fassung ohne Liste am Release: wie bisher
+    assert a2[a2.index("--torch-backend") + 1] == "cu128" and "--no-deps" in a2
+    # Fassung ohne Liste am Release: Prüfsummen aus der eingebauten Liste (torch 2.8.0), nie ohne
+    assert l2.startswith("torch==2.8.0+cu128 --hash=sha256:039b9dcd") and "--require-hashes" in a2
     _bauwerkzeug_und_taleward(a3, l3, a4)
 
 
@@ -201,7 +202,7 @@ def test_quelle_reicht_die_anhaenge_der_freigabe_weiter():
 
 def test_ab_der_pflichtfassung_nur_mit_liste(monkeypatch):
     """Ab PYTORCH_LISTE_PFLICHT_AB ohne unterschriebene Liste keine Installation – auch nicht, wenn ein Server eine
-    solche Fassung nennt. Ältere Fassungen (ohne Liste) gehen wie bisher, mit Hinweis im Protokoll."""
+    solche Fassung nennt. Ältere Fassungen (ohne Liste) nur mit den eingebauten Prüfsummen."""
     from taleward_worker import motor
 
     assert motor.liste_pflicht(motor.PYTORCH_LISTE_PFLICHT_AB, {}) and motor.liste_pflicht("0.5.0", {})
@@ -222,3 +223,16 @@ def test_ab_der_pflichtfassung_nur_mit_liste(monkeypatch):
     inst._lauf()
     assert inst.phase == "fehler" and "fehlt die unterschriebene Liste" in inst.fehlertext
     assert not any("--torch-backend" in a for a in aufrufe)  # nichts von PyTorch geladen
+
+
+def test_eingebaute_liste_passt_nur_zu_torch_280(monkeypatch):
+    """Ältere Fassung ohne eigene Liste: nur mit den eingebauten Prüfsummen; nennt ihre uv.lock ein anderes torch,
+    wird PyTorch nicht installiert."""
+    from taleward_worker import motor
+
+    liste = motor.pytorch_liste_lesen(motor.EINGEBAUTE_PYTORCH_LISTE)
+    assert {(v, p) for v, p, _ in liste} == {(v, p) for v in ("cu128", "cpu") for p in ("torch", "torchaudio", "torchvision")}
+    with pytest.raises(motor.MotorFehler):
+        motor.pytorch_mit_pruefsummen("torch==2.9.0\n", liste, "cu128")
+    zeile = motor.pytorch_mit_pruefsummen("torch==2.8.0 ; sys_platform == 'win32'\n", liste, "cpu")
+    assert zeile.startswith("torch==2.8.0+cpu ") and zeile.count("--hash=sha256:") == 5

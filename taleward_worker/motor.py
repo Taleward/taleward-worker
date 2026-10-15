@@ -358,10 +358,12 @@ class Installation:
         if liste is None and liste_pflicht(fassung or self.fassung, q):
             raise MotorFehler("installation", f"Für die Fassung {fassung or self.fassung} fehlt die unterschriebene "
                                               "Liste der PyTorch-Prüfsummen – sie wird nicht installiert.")
-        if liste is None:
+        if liste is None and q.get("ref") != "lokal":
+            liste = pytorch_liste_lesen(EINGEBAUTE_PYTORCH_LISTE)  # ältere Fassung: Prüfsummen aus der App
+            self.zeilen.append("PyTorch mit den eingebauten Prüfsummen (diese Fassung hat noch keine eigene Liste).")
+        if liste is None:  # nur Entwicklung (lokaler Ordner)
             self.pytorch_geprueft = False
-            self.zeilen.append("PyTorch ohne eigene Prüfsummen (diese Fassung hat noch keine Liste) – nur die Version "
-                               "ist festgelegt.")
+            self.zeilen.append("PyTorch ohne Prüfsummen (Entwicklung) – nur die Version ist festgelegt.")
         else:
             pytorch = pytorch_mit_pruefsummen(pytorch, liste, "cpu" if self.backend == "cpu" else TORCH_BACKEND)
             self.pytorch_geprueft = True
@@ -712,6 +714,19 @@ PYTORCH_LISTE = "pytorch-pruefsummen.txt"
 # torch 2.8.0) gehen noch ohne; sobald die erste Liste vorliegt, kommt sie für diese fest in die Worker-App.
 PYTORCH_LISTE_PFLICHT_AB = "0.4.103"
 MAX_PYTORCH_LISTE = 256 * 1024
+# Für Fassungen ohne eigene Liste (bis 0.4.102, alle mit torch 2.8.0): die unterschriebene Liste der Freigabe v0.4.103
+# (pytorch-pruefsummen.txt, SHA-256 463f1c6d74a2921d039474612d284aa84058b332e8b7549b78b5d9c06ace098a), fest eingebaut.
+# Passt eine ältere Fassung nicht dazu, wird PyTorch nicht installiert.
+EINGEBAUTE_PYTORCH_LISTE = """\
+cu128 torch==2.8.0+cu128 --hash=sha256:039b9dcdd6bdbaa10a8a5cd6be22c4cb3e3589a341e5f904cbb571ca28f55bed --hash=sha256:34c55443aafd31046a7963b63d30bc3b628ee4a704f826796c865fdfd05bb596
+cu128 torchaudio==2.8.0+cu128 --hash=sha256:7a1eb6154e05b8056b34c7a41495e09d57f79eb0180eb4e7f3bb2a61845ca8ea --hash=sha256:f4409df567d0723a7a3a89d32c7552a17e0ff6f137ea26a0d268c665259b2995
+cu128 torchvision==0.23.0+cu128 --hash=sha256:70b3d8bfe04438006ec880c162b0e3aaac90c48b759aa41638dd714c732b182c --hash=sha256:93f1b5f56b20cd6869bca40943de4fd3ca9ccc56e1b57f47c671de1cdab39cdb
+cpu torch==2.8.0+cpu --hash=sha256:2bfc013dd6efdc8f8223a0241d3529af9f315dffefb53ffa3bf14d3f10127da6 --hash=sha256:41e6fc5ec0914fcdce44ccf338b1d19a441b55cafdd741fd0bf1af3f9e4cfd14 --hash=sha256:680129efdeeec3db5da3f88ee5d28c1b1e103b774aef40f9d638e2cce8f8d8d8 --hash=sha256:7631ef49fbd38d382909525b83696dc12a55d68492ade4ace3883c62b9fc140f --hash=sha256:cb06175284673a581dd91fb1965662ae4ecaba6e5c357aa0ea7bb8b84b6b7eeb
+cpu torchaudio==2.8.0 --hash=sha256:4573c6042950c20278e3608a9a38050ba0bc72e0049e1bbfd249caf859a8029b --hash=sha256:c9276857d241c6de257af765c0f51fc011af38cb725401495121b280913007cf
+cpu torchaudio==2.8.0+cpu --hash=sha256:db37df7eee906f8fe0a639fdc673f3541cb2e173169b16d4133447eb922d1938 --hash=sha256:e54bd7fc9472019308097d99102df9acee22aa2451ae808d27840bc874320292
+cpu torchvision==0.23.0 --hash=sha256:01dc33ee24c79148aee7cdbcf34ae8a3c9da1674a591e781577b716d233b1fa6 --hash=sha256:49aa20e21f0c2bd458c71d7b449776cbd5f16693dd5807195a820612b8a229b7
+cpu torchvision==0.23.0+cpu --hash=sha256:51603eb071d0681abc4db98b10ff394ace31f425852e8de249b91c09c60eb19a --hash=sha256:d83d8075db43b8ca89680bdeb2f100c832e2a3aa61ee42c038b1a146e5e511b6
+"""
 _PYTORCH_ZEILE = re.compile(r"^([a-z0-9]+) ([a-z0-9_.-]+)==([A-Za-z0-9.+!]+)((?: --hash=sha256:[0-9a-f]{64})+)$")
 
 

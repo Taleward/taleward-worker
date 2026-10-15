@@ -166,3 +166,12 @@ def test_schwaerzen_cookies_sitzungen_und_vorsilben():
     assert "example.invalid/pfad" in mitnehmen.schwaerzen("https://nutzer:p@ss@wort@example.invalid/pfad")
     for bleibt in ("Autor: Rabenfels", "Sitzungsdauer 3 h", "Fassung 0.3.7", "https://taleward.org/hilfe"):
         assert mitnehmen.schwaerzen(bleibt) == bleibt, bleibt
+
+
+def test_schwaerzen_token_ohne_kopfzeile():
+    from taleward_worker import mitnehmen
+
+    assert "abcdef1234567" not in mitnehmen.schwaerzen("Token abcdef1234567")
+    assert "abcdef1234567" not in mitnehmen.schwaerzen("auth failed: token abcdef1234567 expired")
+    for bleibt in ("Token wurde erneuert", "Token abgelaufen, neuer Versuch"):
+        assert mitnehmen.schwaerzen(bleibt) == bleibt, bleibt
