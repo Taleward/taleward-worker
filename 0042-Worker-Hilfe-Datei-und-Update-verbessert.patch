@@ -1,0 +1,253 @@
+From dd03dca7e9b4c96496fe585f92222e75317a640a Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Thu, 15 Oct 2026 07:15:55 +0200
+Subject: [PATCH 42/43] Worker: Hilfe-Datei und Update verbessert
+
+---
+ taleward_worker/mitnehmen.py    | 30 +++++++++++++++++--------
+ taleward_worker/serverupdate.py | 40 +++++++++++++++++++++++----------
+ tests/test_mitnehmen.py         | 27 ++++++++++++++++++++++
+ tests/test_serverupdate.py      | 38 ++++++++++++++++++++++++++++++-
+ 4 files changed, 113 insertions(+), 22 deletions(-)
+
+diff --git a/taleward_worker/mitnehmen.py b/taleward_worker/mitnehmen.py
+index c59b4de..044a0de 100644
+--- a/taleward_worker/mitnehmen.py
++++ b/taleward_worker/mitnehmen.py
+@@ -127,16 +127,27 @@ class Sicherung:
+ 
+ # ---------------------------------------------------------------------- Hilfe-Datei
++_V = r"(?<![A-Za-z0-9])"  # statt \b: auch nach „_“ (z. B. „X_hf_…“) greifen
++_NAME = (r"[A-Za-z0-9_.\-]*?(?:token|passwor[dt]|password|passwd|pwd|pass|secret|api[_-]?key|schl(?:ü|ue)ssel|key"
++         r"|credentials?)")  # endet auf ein Schlüsselwort: MISTRAL_API_KEY, client_secret, access_token, SMTP_PASS
+ _MUSTER = [
+-    (re.compile(r"\bwk\.[A-Za-z0-9_.\-]+"), "wk.[entfernt]"),
+-    (re.compile(r"\bdpapi:[A-Za-z0-9+/=]+"), "dpapi:[entfernt]"),
+-    (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9_.\-~+/=]+"), "Bearer [entfernt]"),
+-    (re.compile(r"\bhf_[A-Za-z0-9]{8,}"), "hf_[entfernt]"),
+-    (re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_\-]{8,}"), "[Schlüssel entfernt]"),
+-    (re.compile(r"\b[A-Z0-9]{4}-[A-Z0-9]{4}\b"), "[Code entfernt]"),
+-    (re.compile(r"(?i)\b(token|passwor[dt]|password|secret|api[_-]?key|schl(?:ü|ue)ssel|key)(\"?\s*[:=]\s*\"?)"
+-                r"[^\s\"',;&\[]+"), r"\1\2[entfernt]"),
++    # Zugangsdaten in Adressen (auch ohne Punkt im Host: http://u:pw@localhost:8000)
++    (re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://)[^/\s:@]+:[^/\s@]*@"), r"\1[Zugang entfernt]@"),
++    (re.compile(_V + r"wk\.[A-Za-z0-9_.\-]+"), "wk.[entfernt]"),
++    (re.compile(_V + r"dpapi:[A-Za-z0-9+/=]+"), "dpapi:[entfernt]"),
++    (re.compile(r"(?i)" + _V + r"(bearer|basic|digest|negotiate|ntlm)\s+[A-Za-z0-9_.\-~+/=]+"), r"\1 [entfernt]"),
++    (re.compile(_V + r"eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]*)?"), "[JWT entfernt]"),
++    (re.compile(_V + r"hf_[A-Za-z0-9]{8,}"), "hf_[entfernt]"),
++    (re.compile(_V + r"(?:sk|pk|rk)-[A-Za-z0-9_\-]{8,}"), "[Schlüssel entfernt]"),
++    (re.compile(_V + r"[A-Z0-9]{4}-[A-Z0-9]{4}(?![A-Za-z0-9])"), "[Code entfernt]"),
++    # Name = Wert bzw. Name: Wert – Wert in "…", '…' (auch mit Leerzeichen) oder bis zum nächsten Trenner
++    (re.compile(r"(?i)" + _V + r"(" + _NAME + r")(?![A-Za-z0-9])([\"']?\s*[:=]\s*)(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s\"',;&\[]+)"),
++     r"\1\2[entfernt]"),
+     (re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"), "[E-Mail entfernt]"),
+-    (re.compile(r"([?&](?:token|key|code|sig|signature|access_token)=)[^&\s]+", re.I), r"\1[entfernt]"),
++    (re.compile(r"(?i)([?&#;](?:[A-Za-z0-9_\-]*?(?:token|key|code|sig|signature|secret|passwor[dt]|password|pass|auth)))"
++                r"=[^&\s#]+"), r"\1=[entfernt]"),
+ ]
++# Auffangmuster: lange zufällige Zeichenketten (≥ 32 Zeichen mit Ziffern und Buchstaben) – Schlüssel ohne Vorsilbe
++_ZUFALL = re.compile(r"(?<![A-Za-z0-9_\-+/=])(?=[A-Za-z0-9_\-+/=]*[0-9])(?=[A-Za-z0-9_\-+/=]*[A-Za-z])"
++                     r"[A-Za-z0-9_\-+/=]{32,}(?![A-Za-z0-9_\-+/=])")
+ 
+ 
+@@ -145,4 +156,5 @@ def schwaerzen(text: str) -> str:
+     for muster, ersatz in _MUSTER:
+         text = muster.sub(ersatz, text)
++    text = _ZUFALL.sub("[entfernt]", text)
+     heim = str(Path.home())
+     if len(heim) > 3:
+diff --git a/taleward_worker/serverupdate.py b/taleward_worker/serverupdate.py
+index c553f3f..f5e087a 100644
+--- a/taleward_worker/serverupdate.py
++++ b/taleward_worker/serverupdate.py
+@@ -1,3 +1,3 @@
+-"""Updates für „Alles auf diesem PC“: neue Server-Fassung mit Sicherung vorher und Rückweg (Sicherheit E7).
++"""Updates für „Alles auf diesem PC“: neue Server-Fassung mit Sicherung vorher und Rückweg (Sicherheit).
+ 
+ Es gibt keinen anderen Server, der die Fassung vorgibt – das Programm sucht selbst die neueste freigegebene
+@@ -12,5 +12,8 @@ Hochladen noch Verarbeitung):
+ 4. Klappt das nicht: KI-Paket zurück (großes Update: der behaltene alte Ordner, sonst die Paketliste), Sicherung mit
+    der alten Fassung zurückspielen, alte Fassung starten. Die gescheiterte Fassung versucht das Programm nicht wieder
+-   von selbst – erst eine neuere oder „Jetzt aktualisieren“.
++   von selbst – erst eine neuere oder „Jetzt aktualisieren“. Das gilt auch, wenn der Rückweg selbst scheitert.
++
++Unmittelbar vor dem Anhalten wird die Ruhe noch einmal geprüft (das Vorbereiten kann dauern); kam Arbeit dazu,
++bleibt Taleward unverändert und es geht später weiter.
+ """
+ from __future__ import annotations
+@@ -31,4 +34,5 @@ PRUEFEN_ALLE_S = 6 * 3600
+ ERSTE_PRUEFUNG_NACH_S = 600     # nicht gleich beim Start – erst soll Taleward in Ruhe laufen
+ STABIL_S = 20
++BESCHAEFTIGT_WARTEN_S = 1800    # kam beim Anhalten doch noch Arbeit dazu: in einer halben Stunde erneut
+ LAEUFT = ("vorbereiten", "sichern", "tauschen", "starten", "pruefen", "zurueck")
+ 
+@@ -38,5 +42,5 @@ class ServerUpdate:
+         self.app = app                  # WorkerApp: e, server, dienst, installation
+         self.angebot: str | None = None  # neuere freigegebene Fassung
+-        self.phase = ""                 # "" | LAEUFT … | fertig | zurueckgenommen | fehler
++        self.phase = ""                 # "" | LAEUFT … | fertig | zurueckgenommen | fehler | verschoben
+         self.fehler = ""
+         self.alt = ""
+@@ -137,4 +141,6 @@ class ServerUpdate:
+             if self.phase == "fehler":
+                 self._wieder_ab = time.monotonic() + PRUEFEN_ALLE_S
++            elif self.phase == "verschoben":
++                self._wieder_ab = time.monotonic() + BESCHAEFTIGT_WARTEN_S
+ 
+     def _ablauf(self) -> None:
+@@ -149,4 +155,7 @@ class ServerUpdate:
+ 
+         def vor():  # Taleward anhalten und mit der alten Fassung sichern – ohne Sicherung kein Tausch
++            grund = self.beschaeftigt()  # das Vorbereiten kann dauern – inzwischen kann Arbeit dazugekommen sein
++            if grund:
++                raise motor.MotorFehler("beschaeftigt", f"Taleward ist beschäftigt ({grund})")
+             self.phase = "sichern"
+             angehalten["ja"] = True
+@@ -181,7 +190,11 @@ class ServerUpdate:
+         self.fehler = inst.fehler or "installation"
+         if not angehalten:
+-            # Download oder Vorbereitung gescheitert: Taleward lief durch, nichts getauscht – später erneut
++            # Download oder Vorbereitung gescheitert bzw. gerade beschäftigt: Taleward lief durch, nichts getauscht
+             self.phase = "fehler"
+-            self._protokoll(f"Update auf {self.neu} vorbereitet nicht: {inst.fehler} – Taleward läuft unverändert")
++            if inst.fehler == "beschaeftigt":
++                self.phase, self.fehler = "verschoben", "beschaeftigt"
++                self._protokoll(f"Update auf {self.neu} verschoben: {getattr(inst, 'fehlertext', '')} – später noch einmal")
++            else:
++                self._protokoll(f"Update auf {self.neu} vorbereitet nicht: {inst.fehler} – Taleward läuft unverändert")
+             return
+         if gesichert:
+@@ -192,5 +205,6 @@ class ServerUpdate:
+             except motor.MotorFehler as e:
+                 self._protokoll(f"Rückweg des KI-Pakets gescheitert: {e.code} {e.text[-300:]}")
+-            self._gescheitert()
++            finally:
++                self._gescheitert()
+         else:
+             self.phase = "fehler"
+@@ -225,10 +239,12 @@ class ServerUpdate:
+         self.phase = "zurueck"
+         self._protokoll(f"Update auf {self.neu} wird zurückgenommen – zurück auf {self.alt}")
+-        a.dienst.stoppen()
+-        a.server.stoppen()
+-        inst.zurueck(vorher)
+-        if datei is not None:
+-            self.sicherung_zurueckspielen(datei)
+-        self._gescheitert()
++        try:
++            a.dienst.stoppen()
++            a.server.stoppen()
++            inst.zurueck(vorher)
++            if datei is not None:
++                self.sicherung_zurueckspielen(datei)
++        finally:
++            self._gescheitert()  # auch wenn der Rückweg scheitert: diese Fassung nicht von selbst wieder versuchen
+         a.server.starten()
+ 
+diff --git a/tests/test_mitnehmen.py b/tests/test_mitnehmen.py
+index 674888c..589aa0e 100644
+--- a/tests/test_mitnehmen.py
++++ b/tests/test_mitnehmen.py
+@@ -114,2 +114,29 @@ def test_hilfe_datei_vorschau_und_speichern(monkeypatch, tmp_path):
+     assert api.hilfe_speichern() == {"ok": True, "datei": "hilfe.txt"}
+     assert ziel.read_text(encoding="utf-8") == text  # genau das, was gezeigt wurde
++
++
++def test_schwaerzen_weitere_formen():
++    """Weitere Formen: Namen mit _, Werte in Anführungszeichen, Basic, JWT, Zugang in Adressen, Fragment,
++    Schlüssel ohne Vorsilbe."""
++    from taleward_worker import mitnehmen
++
++    proben = {
++        "MISTRAL_API_KEY=abc123geheim": "abc123geheim",
++        "client_secret=xyz-geheim": "xyz-geheim",
++        "access_token: tok-geheim-1": "tok-geheim-1",
++        "passwort='mit leer zeichen'": "leer zeichen",
++        'secret: "noch mehr leer"': "noch mehr",
++        "Authorization: Basic dXNlcjpwYXNzd29yZA==": "dXNlcjpwYXNzd29yZA",
++        "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl": "eyJ",
++        "http://u:pw-geheim@localhost:8000/app/": "pw-geheim",
++        "https://x.invalid/a#token=fragment-geheim": "fragment-geheim",
++        "https://x.invalid/#/login?access_token=frage-geheim": "frage-geheim",
++        "Schlüssel 4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e": "4f9a8b7c6d5e",
++        "X_hf_ABCDEFGHIJKLMNOP": "ABCDEFGHIJKLMNOP",
++        "smtp_pass=Kessel7": "Kessel7",
++    }
++    for probe, geheim in proben.items():
++        assert geheim not in mitnehmen.schwaerzen(probe), probe
++    for bleibt in ("Version 0.4.102 läuft", "Tests passed: 3, keyboard: de", "TALEWARD_EINZELPLATZ_WORKER_GESCHUETZT=true",
++                   "http://localhost:8000/app/"):
++        assert mitnehmen.schwaerzen(bleibt) == bleibt, bleibt
+diff --git a/tests/test_serverupdate.py b/tests/test_serverupdate.py
+index ea8e2c8..7df53ff 100644
+--- a/tests/test_serverupdate.py
++++ b/tests/test_serverupdate.py
+@@ -1,3 +1,3 @@
+-"""Updates für „Alles auf diesem PC“: Sicherung vorher, Prüfung danach, Rückweg bei Fehlern (E7)."""
++"""Updates für „Alles auf diesem PC“: Sicherung vorher, Prüfung danach, Rückweg bei Fehlern."""
+ import json
+ import socket
+@@ -66,4 +66,6 @@ class ErsatzInstallation:
+     neu_inhalt = None  # was nach dem Tausch in der Fassungsdatei steht (Standard: die Fassung)
+     scheitern = False
++    beim_vorbereiten = None  # wird während des Vorbereitens aufgerufen (z. B. kommt Arbeit dazu)
++    rueckweg_scheitert = False
+ 
+     def __init__(self, fassung, testmodus=False, backend="cuda", alt_behalten=False, **_):
+@@ -80,4 +82,6 @@ class ErsatzInstallation:
+         def lauf():
+             try:
++                if type(self).beim_vorbereiten:
++                    type(self).beim_vorbereiten()
+                 self.vor_tausch()
+                 if self.scheitern:
+@@ -93,4 +97,6 @@ class ErsatzInstallation:
+     def zurueck(self, vorher: Path):
+         self.protokoll.append("zurueck")
++        if type(self).rueckweg_scheitert:
++            raise OSError("Datei gesperrt")
+         _datei().write_text(vorher.read_text())
+ 
+@@ -126,4 +132,5 @@ def umgebung(tmp_path, monkeypatch):
+     monkeypatch.setattr(motor, "neueste_fassung", lambda mindestens=None: "0.4.98")
+     ErsatzInstallation.neu_inhalt, ErsatzInstallation.scheitern = None, False
++    ErsatzInstallation.beim_vorbereiten, ErsatzInstallation.rueckweg_scheitert = None, False
+     installationen = []
+ 
+@@ -259,2 +266,31 @@ def test_oberflaeche_zeigt_den_stand(umgebung):
+     assert set(d) == {"phase", "angebot", "alt", "neu", "gescheitert", "anteil"}
+     json.dumps(d)
++
++
++def test_arbeit_waehrend_der_vorbereitung_verschiebt_das_update(umgebung):
++    """Ruhe wird unmittelbar vor dem Anhalten noch einmal geprüft – das Vorbereiten kann lange dauern."""
++    from taleward_worker import serverupdate
++
++    u, app = umgebung.u, umgebung.app
++    ErsatzInstallation.beim_vorbereiten = lambda: (umgebung.tmp / "busy.txt").write_text("upload")
++    u.pruefen()
++    u.starten("0.4.98")
++    _warten(u)
++    assert u.phase == "verschoben" and u.fehler == "beschaeftigt", umgebung.protokoll
++    assert umgebung.aufrufe == [] and _datei().read_text() == "0.4.97"  # nicht angehalten, nichts gesichert
++    assert umgebung.srv.laeuft() and app.e.update_gescheitert == ""
++    assert time.monotonic() < u._wieder_ab <= time.monotonic() + serverupdate.BESCHAEFTIGT_WARTEN_S
++    assert any("verschoben" in z for z in umgebung.protokoll)
++
++
++def test_gescheiterter_rueckweg_wird_nicht_von_selbst_wiederholt(umgebung):
++    u, app = umgebung.u, umgebung.app
++    ErsatzInstallation.neu_inhalt = "0.4.98-absturz"
++    ErsatzInstallation.rueckweg_scheitert = True
++    u.pruefen()
++    u.starten("0.4.98")
++    _warten(u)
++    assert app.e.update_gescheitert == "0.4.98", umgebung.protokoll
++    u._naechste, u._wieder_ab = 0, 0
++    u.wenn_faellig()
++    assert not u.laeuft() and len(umgebung.installationen) == 1
+-- 
+2.43.0
+
