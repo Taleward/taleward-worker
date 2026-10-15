@@ -270,9 +270,11 @@ def test_kleine_bibliotheksaenderung_geht_in_den_vorhandenen_motor(eigener_ordne
     inst._lauf()
     assert inst.phase == "fertig" and motor.installiert()["fassung"] == "0.4.20"
     # kleine Pakete nur mit Prüfsummen, nie über das PyTorch-Verzeichnis
-    assert len(uv) == 2 and "-r" in uv[0] and "--require-hashes" in uv[0] and "--torch-backend" not in uv[0]
-    assert "--reinstall" in uv[1]
-    assert "--hash=sha256:" in listen[0] and "torch" not in listen[0]
+    # (davor das Bauwerkzeug mit Prüfsummen, danach der Code ohne Paketverzeichnis)
+    assert len(uv) == 3 and "--require-hashes" in uv[0] and "hatchling==" in listen[0]
+    assert "-r" in uv[1] and "--require-hashes" in uv[1] and "--torch-backend" not in uv[1]
+    assert "--reinstall" in uv[2] and "--no-build-isolation" in uv[2] and "--no-index" in uv[2]
+    assert "--hash=sha256:" in listen[1] and "torch" not in listen[1]
 
     # torch dabei → vollständige Installation
     monkeypatch.setattr(motor.subprocess, "run",

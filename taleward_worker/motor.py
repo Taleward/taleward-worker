@@ -5,10 +5,13 @@ Der Motor ist der Taleward-Server-Code in genau der Fassung des verbundenen Serv
 
 1. Python 3.11 (von uv verwaltet, unabhängig von einem installierten Python)
 2. Pakete in genau den Versionen aus uv.lock der passenden Fassung – mit Prüfsummen: uv lädt nur Dateien, deren
-   Prüfsumme in uv.lock dieses (freigegebenen) Commits steht (--require-hashes). Ausgenommen sind torch, torchaudio
-   und torchvision: Die kommen in der Variante für die Grafikkarte vom PyTorch-Verzeichnis (uv --torch-backend), für
-   diese Dateien stehen keine Prüfsummen in uv.lock; sie sind auf die Version festgelegt.
-3. der Taleward-Code selbst (ohne Abhängigkeiten, die kamen aus Schritt 2) und ffmpeg (imageio-ffmpeg)
+   Prüfsumme in uv.lock dieses (freigegebenen) Commits steht (--require-hashes). torch, torchaudio und torchvision
+   kommen in der Variante für die Grafikkarte vom PyTorch-Verzeichnis (uv --torch-backend); ihre Prüfsummen stehen
+   in `pytorch-pruefsummen.txt` am Release, die Freigabe nennt deren SHA-256. Ältere Fassungen ohne diese Liste:
+   PyTorch nur auf die Version festgelegt (steht dann im Protokoll).
+3. der Taleward-Code selbst (ohne Abhängigkeiten, die kamen aus Schritt 2) und ffmpeg (imageio-ffmpeg). Gebaut wird
+   er mit dem Bauwerkzeug aus BAUWERKZEUG (feste Prüfsummen, vorher in die Umgebung installiert) – ohne Zugriff auf
+   ein Paketverzeichnis (--no-build-isolation --no-index).
 
 Im Testmodus reicht der Taleward-Code mit den Grundpaketen (ein paar MB statt einiger GB), ebenfalls mit Prüfsummen.
 """
@@ -89,7 +92,7 @@ def quelle(fassung: str) -> dict:
         raise MotorFehler(_netzcode(e)) from None
     except freigabe.FreigabeFehler as e:
         raise MotorFehler("nicht_freigegeben", str(e)) from None
-    return _adressen(tag, f.commit)
+    return _adressen(tag, f.commit, f.dateien)
 
 
 def neueste_fassung(klient: httpx.Client | None = None, mindestens: str | None = None) -> str:
@@ -138,9 +141,10 @@ def neueste_fassung(klient: httpx.Client | None = None, mindestens: str | None =
     raise MotorFehler("nicht_freigegeben", "Keine freigegebene Fassung gefunden.")
 
 
-def _adressen(tag: str, commit: str) -> dict:
+def _adressen(tag: str, commit: str, dateien: dict[str, str] | None = None) -> dict:
     roh = f"https://raw.githubusercontent.com/{REPO}/{commit}"
-    return {"ref": tag, "genau": True, "commit": commit,
+    return {"ref": tag, "genau": True, "commit": commit, "anhaenge": dict(dateien or {}),
+            "release": f"https://github.com/{REPO}/releases/download/{tag}",
             "paket": f"https://github.com/{REPO}/archive/{commit}.zip",
             "anforderungen": f"{roh}/engine-requirements.txt",
             "projekt": f"{roh}/pyproject.toml", "lock": f"{roh}/uv.lock"}
@@ -164,6 +168,7 @@ class Installation:
     nach_tausch: object = None
     alt_behalten: bool = False    # Update „Alles auf diesem PC“: alten Motor bis zur Prüfung als motor-alt behalten
     weg: str = ""                 # gross (neuer Ordner), gleich/klein (im vorhandenen Motor) – für den Rückweg
+    pytorch_geprueft: bool = False  # PyTorch mit Prüfsummen aus der Liste am Release
     _prozess: subprocess.Popen | None = None
     _abbrechen: threading.Event = field(default_factory=threading.Event)
 
@@ -285,10 +290,12 @@ class Installation:
                  erwartet_mb=self.erwartet_mb // 2 if pytorch else self.erwartet_mb)
         if pytorch:
             torch = "cpu" if self.backend == "cpu" else TORCH_BACKEND
-            self._uv("pip", "install", "--python", py, "--no-deps", "--torch-backend", torch, "-r", str(pytorch),
+            self._uv("pip", "install", "--python", py, "--no-deps", "--torch-backend", torch,
+                     *(["--require-hashes"] if self.pytorch_geprueft else []), "-r", str(pytorch),
                      anteil_von=0.5, anteil_bis=0.9, erwartet_mb=self.erwartet_mb // 2)
         self.phase = "taleward"
-        self._uv("pip", "install", "--python", py, "--no-deps", q["paket"], anteil_von=0.9, anteil_bis=0.95)
+        self._bauwerkzeug(py)
+        self._taleward_einspielen(py, q, anteil_von=0.9, anteil_bis=0.95)
 
         self.phase = "ffmpeg"
         pruefung = _python_pruefen(py, "import app, sys; print('ok')")
@@ -329,8 +336,8 @@ class Installation:
 
 
     def _listen(self, q: dict) -> tuple[Path, Path | None]:
-        """Paketlisten aus uv.lock der Fassung: (mit Prüfsummen, PyTorch-Familie ohne). Im Testmodus nur die
-        Grundpakete und ffmpeg, ohne PyTorch."""
+        """Paketlisten aus uv.lock der Fassung: (mit Prüfsummen, PyTorch-Familie – mit Prüfsummen aus der Liste am
+        Release, sonst nur auf die Version festgelegt). Im Testmodus nur die Grundpakete und ffmpeg, ohne PyTorch."""
         ordner = pfade.basis() / "cache"
         ordner.mkdir(parents=True, exist_ok=True)
         basis, ki = pruefsummen(q, umgebung=self._umgebung(), ordner=ordner / "lock")
@@ -346,8 +353,37 @@ class Installation:
         (ordner / "geprueft.txt").write_text(geprueft, encoding="utf-8")
         if not pytorch.strip():
             return ordner / "geprueft.txt", None
+        liste = pytorch_pruefsummen(q)
+        if liste is None:
+            self.pytorch_geprueft = False
+            self.zeilen.append("PyTorch ohne eigene Prüfsummen (diese Fassung hat noch keine Liste) – nur die Version "
+                               "ist festgelegt.")
+        else:
+            pytorch = pytorch_mit_pruefsummen(pytorch, liste, "cpu" if self.backend == "cpu" else TORCH_BACKEND)
+            self.pytorch_geprueft = True
         (ordner / "pytorch.txt").write_text(pytorch, encoding="utf-8")
         return ordner / "geprueft.txt", ordner / "pytorch.txt"
+
+    # ------------------------------------------------------------------ Taleward-Code
+    def _bauwerkzeug(self, py: str) -> None:
+        """Bauwerkzeug mit festen Prüfsummen in die Umgebung – nur, was dort noch fehlt (vorhandene Pakete kommen aus
+        uv.lock und bleiben in deren Fassung)."""
+        vorhanden = installierte_pakete(py, self._umgebung())
+        fehlt = [block for name, block in eintraege(BAUWERKZEUG) if name not in vorhanden]
+        if not fehlt:
+            return
+        datei = pfade.basis() / "cache" / "bauwerkzeug.txt"
+        datei.parent.mkdir(parents=True, exist_ok=True)
+        datei.write_text("\n".join(fehlt) + "\n", encoding="utf-8")
+        self._uv("pip", "install", "--python", py, "--no-deps", "--require-hashes", "-r", str(datei),
+                 anteil_von=self.anteil, anteil_bis=self.anteil)
+
+    def _taleward_einspielen(self, py: str, q: dict, anteil_von: float, anteil_bis: float,
+                             neu: bool = False) -> None:
+        """Den Taleward-Code (Commit der Freigabe) bauen und installieren: ohne Abhängigkeiten, ohne Bau-Umgebung
+        und ohne Paketverzeichnis – es läuft nur das Bauwerkzeug mit bekannter Prüfsumme."""
+        self._uv("pip", "install", "--python", py, "--no-deps", "--no-build-isolation", "--no-index",
+                 *(["--reinstall"] if neu else []), q["paket"], anteil_von=anteil_von, anteil_bis=anteil_bis)
 
     # ------------------------------------------------------------------ Schneller Weg bei neuer Serverfassung
     def _nur_taleward_noetig(self, q: dict) -> bool:
@@ -391,6 +427,7 @@ class Installation:
         self.phase = "taleward"
         py = str(pfade.motor_python())
         geprueft = self._listen(q)[0] if zusatz else None  # vorher: braucht das Netz, der Worker läuft noch
+        self._bauwerkzeug(py)  # stört den laufenden Worker nicht (wird nur beim Bauen gebraucht)
         if callable(self.vor_tausch):
             self.vor_tausch()  # laufenden Worker anhalten (nur für wenige Sekunden)
         try:
@@ -399,8 +436,7 @@ class Installation:
                 self._uv("pip", "install", "--python", py, "--no-deps", "--require-hashes", "-r", str(geprueft),
                          anteil_von=0.1, anteil_bis=0.6)
                 self.phase = "taleward"
-            self._uv("pip", "install", "--python", py, "--no-deps", "--reinstall", q["paket"],
-                     anteil_von=0.6 if zusatz else 0.1, anteil_bis=0.9)
+            self._taleward_einspielen(py, q, anteil_von=0.6 if zusatz else 0.1, anteil_bis=0.9, neu=True)
             pruefung = _python_pruefen(py, "import app, sys; print('ok')")
             if "ok" not in pruefung.stdout:
                 raise MotorFehler("installation", pruefung.stderr[-2000:])
@@ -631,6 +667,96 @@ IMAGEIO_FFMPEG = """imageio-ffmpeg==0.6.0 \\
     --hash=sha256:c7e46fcec401dd990405049d2e2f475e2b397779df2519b544b8aab515195282 \\
     --hash=sha256:e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755
 """
+
+
+# Bauwerkzeug für den Taleward-Code ([build-system] im Server: hatchling) mit seinen Abhängigkeiten, Python 3.11.
+# Fest mit Prüfsummen, damit beim Bauen nichts Ungeprüftes von PyPI läuft. Neu erzeugen mit:
+#   echo hatchling | uv pip compile - --generate-hashes --universal --python-version 3.11 --no-header --no-annotate
+BAUWERKZEUG = """hatchling==1.32.4 \\
+    --hash=sha256:08ecf7548fb48205e7f213d70c71e67b8271b7242093dc3f1da578b42c734a2c \\
+    --hash=sha256:c4468f73144c054d2aab4ef0f0378c43b9878bf07f8ffd6b79690e970d375f07
+packaging==26.3 \\
+    --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \\
+    --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+pathspec==1.1.1 \\
+    --hash=sha256:17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a \\
+    --hash=sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189
+pluggy==1.6.0 \\
+    --hash=sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3 \\
+    --hash=sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746
+tomlkit==0.15.1 \\
+    --hash=sha256:177a05aece5a8ca5266fd3c448abb47b8d352f09d477d3ca8332db4d89b24304 \\
+    --hash=sha256:e25bbf38843005246210a12982776f27f99cb9be67160e14434d0c0d21ee1e97
+trove-classifiers==2026.9.21.13 \\
+    --hash=sha256:0a9ebc8d4e2f3e8a22848c5258033035bec17a3012ac3fea16dbaa764489eb71 \\
+    --hash=sha256:8b1ff4f9c191b1040b71c37f1e445ab99732911e3cd91de52838453a854d7a17
+"""
+
+PYTORCH_LISTE = "pytorch-pruefsummen.txt"
+MAX_PYTORCH_LISTE = 256 * 1024
+_PYTORCH_ZEILE = re.compile(r"^([a-z0-9]+) ([a-z0-9_.-]+)==([A-Za-z0-9.+!]+)((?: --hash=sha256:[0-9a-f]{64})+)$")
+
+
+def installierte_pakete(py: str, umgebung: dict) -> set[str]:
+    """Namen der Pakete in einer Umgebung (klein geschrieben, „_“ als „-“)."""
+    try:
+        r = subprocess.run([uv_programm(), "pip", "list", "--python", py, "--format", "json"], capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", timeout=120,
+                           env={**umgebung, "PYTHONUTF8": "1"}, cwd=pfade.basis(), **_ohne_fenster())
+        liste = json.loads(r.stdout or "[]") if r.returncode == 0 else []
+    except (OSError, subprocess.SubprocessError, ValueError):
+        liste = []
+    return {str(p.get("name", "")).lower().replace("_", "-") for p in liste if isinstance(p, dict)}
+
+
+def pytorch_pruefsummen(q: dict) -> dict[tuple[str, str, str], str] | None:
+    """Liste `pytorch-pruefsummen.txt` am Release laden – nur, wenn die (unterschriebene) Freigabe sie mit SHA-256
+    nennt, und nur, wenn die Datei genau dazu passt. → {(Variante, Paket, volle Fassung): „--hash=… …“}.
+    None: Die Freigabe nennt keine Liste (ältere Fassung oder Entwicklung)."""
+    import hashlib
+
+    erwartet = (q.get("anhaenge") or {}).get(PYTORCH_LISTE)
+    if not erwartet or not q.get("release"):
+        return None
+    try:
+        with httpx.Client(timeout=30, follow_redirects=True, headers={"User-Agent": f"TalewardWorker/{VERSION}"}) as k:
+            r = k.get(f"{q['release']}/{PYTORCH_LISTE}")
+    except httpx.HTTPError as e:
+        raise MotorFehler(_netzcode(e)) from None
+    if r.status_code != 200 or len(r.content) > MAX_PYTORCH_LISTE:
+        raise MotorFehler("installation", f"{PYTORCH_LISTE}: HTTP {r.status_code}")
+    if hashlib.sha256(r.content).hexdigest() != erwartet:
+        raise MotorFehler("installation", f"{PYTORCH_LISTE} passt nicht zur Freigabe.")
+    return pytorch_liste_lesen(r.content.decode("utf-8"))
+
+
+def pytorch_liste_lesen(text: str) -> dict[tuple[str, str, str], str]:
+    liste: dict[tuple[str, str, str], str] = {}
+    for zeile in text.splitlines():
+        if not zeile.strip() or zeile.startswith("#"):
+            continue
+        m = _PYTORCH_ZEILE.match(zeile.strip())
+        if not m:
+            raise MotorFehler("installation", f"{PYTORCH_LISTE} ist nicht lesbar.")
+        liste[(m.group(1), m.group(2), m.group(3))] = m.group(4).strip()
+    return liste
+
+
+def pytorch_mit_pruefsummen(pytorch: str, liste: dict[tuple[str, str, str], str], variante: str) -> str:
+    """„torch==2.8.0 ; Bedingung“ → „torch==2.8.0+cu128 ; Bedingung --hash=…“. uv prüft Prüfsummen nur gegen die volle
+    Fassung (mit „+cu128“), deshalb steht sie in der Anforderung. Fehlt ein Eintrag: keine Installation."""
+    zeilen = []
+    for zeile in pytorch.splitlines():
+        if not zeile.strip():
+            continue
+        anforderung, _, bedingung = zeile.partition(";")
+        name, _, fassung = anforderung.strip().partition("==")
+        voll = f"{fassung}+{variante}"
+        hashes = liste.get((variante, name.lower(), voll))
+        if not hashes:
+            raise MotorFehler("installation", f"Keine Prüfsumme für {name} {voll} in {PYTORCH_LISTE}.")
+        zeilen.append(f"{name}=={voll}" + (f" ; {bedingung.strip()}" if bedingung.strip() else "") + f" {hashes}")
+    return "\n".join(zeilen) + "\n"
 
 
 def pruefsummen(q: dict, umgebung: dict, ordner: Path) -> tuple[str, str]:

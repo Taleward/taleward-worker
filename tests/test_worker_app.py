@@ -301,7 +301,11 @@ def test_neue_serverfassung_tauscht_nur_den_code(eigener_ordner, monkeypatch):
                               nach_tausch=lambda: schritte.append("nach"))
     inst._lauf()
     assert inst.phase == "fertig" and schritte == ["vor", "nach"]
-    assert uv == [("pip", "install", "--python", str(py), "--no-deps", "--reinstall", "paket.zip")]
+    # erst das Bauwerkzeug mit Prüfsummen (noch vor dem Anhalten), dann der Code – ohne Paketverzeichnis gebaut
+    assert uv == [("pip", "install", "--python", str(py), "--no-deps", "--require-hashes", "-r",
+                   str(pfade.basis() / "cache" / "bauwerkzeug.txt")),
+                  ("pip", "install", "--python", str(py), "--no-deps", "--no-build-isolation", "--no-index",
+                   "--reinstall", "paket.zip")]
     assert motor.installiert()["fassung"] == "0.4.14"
 
     # Geänderte Bibliotheken: der schnelle Weg wird nicht genommen

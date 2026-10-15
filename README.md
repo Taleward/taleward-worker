@@ -84,8 +84,10 @@ QR-Code bei.
   Rest bleibt für anderes. Nach jedem Auftrag zeigt die App Dauer und höchsten Grafikspeicher als gemessene Werte.
 - **Immer passend zum Server:** Das KI-Paket wird in genau der Fassung des Servers installiert (der freigegebene Commit
   zum Git-Tag `v<Fassung>` im Server-Repository) und zieht nach einem Server-Update selbst nach. Die Pakete kommen mit
-  den Prüfsummen aus `uv.lock` dieses Commits (`--require-hashes`); nur PyTorch selbst (torch, torchaudio,
-  torchvision) kommt in der Variante für die Grafikkarte auf eine feste Version festgelegt, ohne Prüfsumme.
+  den Prüfsummen aus `uv.lock` dieses Commits (`--require-hashes`). PyTorch selbst (torch, torchaudio, torchvision)
+  kommt in der Variante für die Grafikkarte mit den Prüfsummen aus `pytorch-pruefsummen.txt`, die mit der Freigabe
+  unterschrieben ist (ältere Fassungen ohne diese Liste: nur auf die Version festgelegt). Gebaut wird der
+  Taleward-Code mit einem Bauwerkzeug mit festen Prüfsummen, ohne weitere Downloads.
 - **Updates über den eigenen Server:** Die App fragt nur ihren Taleward-Server nach neuen Fassungen. Unter
   Windows installiert sie sie still, sobald sie nichts zu tun hat; unter Linux über `uv tool install`. Abschaltbar in
   den Einstellungen.
