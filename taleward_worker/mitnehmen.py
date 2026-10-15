@@ -126,24 +126,36 @@ class Sicherung:
 
 
 # ---------------------------------------------------------------------- Hilfe-Datei
+_V = r"(?<![A-Za-z0-9])"  # statt \b: auch nach „_“ (z. B. „X_hf_…“) greifen
+_NAME = (r"[A-Za-z0-9_.\-]*?(?:token|passwor[dt]|password|passwd|pwd|pass|secret|api[_-]?key|schl(?:ü|ue)ssel|key"
+         r"|credentials?)")  # endet auf ein Schlüsselwort: MISTRAL_API_KEY, client_secret, access_token, SMTP_PASS
 _MUSTER = [
-    (re.compile(r"\bwk\.[A-Za-z0-9_.\-]+"), "wk.[entfernt]"),
-    (re.compile(r"\bdpapi:[A-Za-z0-9+/=]+"), "dpapi:[entfernt]"),
-    (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9_.\-~+/=]+"), "Bearer [entfernt]"),
-    (re.compile(r"\bhf_[A-Za-z0-9]{8,}"), "hf_[entfernt]"),
-    (re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_\-]{8,}"), "[Schlüssel entfernt]"),
-    (re.compile(r"\b[A-Z0-9]{4}-[A-Z0-9]{4}\b"), "[Code entfernt]"),
-    (re.compile(r"(?i)\b(token|passwor[dt]|password|secret|api[_-]?key|schl(?:ü|ue)ssel|key)(\"?\s*[:=]\s*\"?)"
-                r"[^\s\"',;&\[]+"), r"\1\2[entfernt]"),
+    # Zugangsdaten in Adressen (auch ohne Punkt im Host: http://u:pw@localhost:8000)
+    (re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://)[^/\s:@]+:[^/\s@]*@"), r"\1[Zugang entfernt]@"),
+    (re.compile(_V + r"wk\.[A-Za-z0-9_.\-]+"), "wk.[entfernt]"),
+    (re.compile(_V + r"dpapi:[A-Za-z0-9+/=]+"), "dpapi:[entfernt]"),
+    (re.compile(r"(?i)" + _V + r"(bearer|basic|digest|negotiate|ntlm)\s+[A-Za-z0-9_.\-~+/=]+"), r"\1 [entfernt]"),
+    (re.compile(_V + r"eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]*)?"), "[JWT entfernt]"),
+    (re.compile(_V + r"hf_[A-Za-z0-9]{8,}"), "hf_[entfernt]"),
+    (re.compile(_V + r"(?:sk|pk|rk)-[A-Za-z0-9_\-]{8,}"), "[Schlüssel entfernt]"),
+    (re.compile(_V + r"[A-Z0-9]{4}-[A-Z0-9]{4}(?![A-Za-z0-9])"), "[Code entfernt]"),
+    # Name = Wert bzw. Name: Wert – Wert in "…", '…' (auch mit Leerzeichen) oder bis zum nächsten Trenner
+    (re.compile(r"(?i)" + _V + r"(" + _NAME + r")(?![A-Za-z0-9])([\"']?\s*[:=]\s*)(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s\"',;&\[]+)"),
+     r"\1\2[entfernt]"),
     (re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"), "[E-Mail entfernt]"),
-    (re.compile(r"([?&](?:token|key|code|sig|signature|access_token)=)[^&\s]+", re.I), r"\1[entfernt]"),
+    (re.compile(r"(?i)([?&#;](?:[A-Za-z0-9_\-]*?(?:token|key|code|sig|signature|secret|passwor[dt]|password|pass|auth)))"
+                r"=[^&\s#]+"), r"\1=[entfernt]"),
 ]
+# Auffangmuster: lange zufällige Zeichenketten (≥ 32 Zeichen mit Ziffern und Buchstaben) – Schlüssel ohne Vorsilbe
+_ZUFALL = re.compile(r"(?<![A-Za-z0-9_\-+/=])(?=[A-Za-z0-9_\-+/=]*[0-9])(?=[A-Za-z0-9_\-+/=]*[A-Za-z])"
+                     r"[A-Za-z0-9_\-+/=]{32,}(?![A-Za-z0-9_\-+/=])")
 
 
 def schwaerzen(text: str) -> str:
     """Schlüssel, Passwörter, Codes, E-Mail-Adressen und den Benutzerordner unkenntlich machen."""
     for muster, ersatz in _MUSTER:
         text = muster.sub(ersatz, text)
+    text = _ZUFALL.sub("[entfernt]", text)
     heim = str(Path.home())
     if len(heim) > 3:
         text = text.replace(heim, "%USERPROFILE%").replace(heim.replace("\\", "/"), "%USERPROFILE%")

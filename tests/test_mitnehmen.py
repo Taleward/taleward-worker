@@ -113,3 +113,30 @@ def test_hilfe_datei_vorschau_und_speichern(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "datei_waehlen", lambda **k: ziel)
     assert api.hilfe_speichern() == {"ok": True, "datei": "hilfe.txt"}
     assert ziel.read_text(encoding="utf-8") == text  # genau das, was gezeigt wurde
+
+
+def test_schwaerzen_weitere_formen():
+    """Weitere Formen: Namen mit _, Werte in Anführungszeichen, Basic, JWT, Zugang in Adressen, Fragment,
+    Schlüssel ohne Vorsilbe."""
+    from taleward_worker import mitnehmen
+
+    proben = {
+        "MISTRAL_API_KEY=abc123geheim": "abc123geheim",
+        "client_secret=xyz-geheim": "xyz-geheim",
+        "access_token: tok-geheim-1": "tok-geheim-1",
+        "passwort='mit leer zeichen'": "leer zeichen",
+        'secret: "noch mehr leer"': "noch mehr",
+        "Authorization: Basic dXNlcjpwYXNzd29yZA==": "dXNlcjpwYXNzd29yZA",
+        "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl": "eyJ",
+        "http://u:pw-geheim@localhost:8000/app/": "pw-geheim",
+        "https://x.invalid/a#token=fragment-geheim": "fragment-geheim",
+        "https://x.invalid/#/login?access_token=frage-geheim": "frage-geheim",
+        "Schlüssel 4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e": "4f9a8b7c6d5e",
+        "X_hf_ABCDEFGHIJKLMNOP": "ABCDEFGHIJKLMNOP",
+        "smtp_pass=Kessel7": "Kessel7",
+    }
+    for probe, geheim in proben.items():
+        assert geheim not in mitnehmen.schwaerzen(probe), probe
+    for bleibt in ("Version 0.4.102 läuft", "Tests passed: 3, keyboard: de", "TALEWARD_EINZELPLATZ_WORKER_GESCHUETZT=true",
+                   "http://localhost:8000/app/"):
+        assert mitnehmen.schwaerzen(bleibt) == bleibt, bleibt

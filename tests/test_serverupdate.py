@@ -1,4 +1,4 @@
-"""Updates für „Alles auf diesem PC“: Sicherung vorher, Prüfung danach, Rückweg bei Fehlern (E7)."""
+"""Updates für „Alles auf diesem PC“: Sicherung vorher, Prüfung danach, Rückweg bei Fehlern."""
 import json
 import socket
 import sys
@@ -65,6 +65,8 @@ class ErsatzInstallation:
     """Wie motor.Installation, nur ohne Download: „tauscht“ die Fassungsdatei."""
     neu_inhalt = None  # was nach dem Tausch in der Fassungsdatei steht (Standard: die Fassung)
     scheitern = False
+    beim_vorbereiten = None  # wird während des Vorbereitens aufgerufen (z. B. kommt Arbeit dazu)
+    rueckweg_scheitert = False
 
     def __init__(self, fassung, testmodus=False, backend="cuda", alt_behalten=False, **_):
         self.fassung, self.alt_behalten = fassung, alt_behalten
@@ -79,6 +81,8 @@ class ErsatzInstallation:
     def starten(self):
         def lauf():
             try:
+                if type(self).beim_vorbereiten:
+                    type(self).beim_vorbereiten()
                 self.vor_tausch()
                 if self.scheitern:
                     raise RuntimeError("Tausch gescheitert")
@@ -92,6 +96,8 @@ class ErsatzInstallation:
 
     def zurueck(self, vorher: Path):
         self.protokoll.append("zurueck")
+        if type(self).rueckweg_scheitert:
+            raise OSError("Datei gesperrt")
         _datei().write_text(vorher.read_text())
 
     def alt_entfernen(self):
@@ -125,6 +131,7 @@ def umgebung(tmp_path, monkeypatch):
     monkeypatch.setattr(motor, "installiert", lambda: {"fassung": _datei().read_text().split("-")[0]})
     monkeypatch.setattr(motor, "neueste_fassung", lambda mindestens=None: "0.4.98")
     ErsatzInstallation.neu_inhalt, ErsatzInstallation.scheitern = None, False
+    ErsatzInstallation.beim_vorbereiten, ErsatzInstallation.rueckweg_scheitert = None, False
     installationen = []
 
     def neue_installation(*a, **k):
@@ -258,3 +265,32 @@ def test_oberflaeche_zeigt_den_stand(umgebung):
     d = umgebung.u.fuer_oberflaeche()
     assert set(d) == {"phase", "angebot", "alt", "neu", "gescheitert", "anteil"}
     json.dumps(d)
+
+
+def test_arbeit_waehrend_der_vorbereitung_verschiebt_das_update(umgebung):
+    """Ruhe wird unmittelbar vor dem Anhalten noch einmal geprüft – das Vorbereiten kann lange dauern."""
+    from taleward_worker import serverupdate
+
+    u, app = umgebung.u, umgebung.app
+    ErsatzInstallation.beim_vorbereiten = lambda: (umgebung.tmp / "busy.txt").write_text("upload")
+    u.pruefen()
+    u.starten("0.4.98")
+    _warten(u)
+    assert u.phase == "verschoben" and u.fehler == "beschaeftigt", umgebung.protokoll
+    assert umgebung.aufrufe == [] and _datei().read_text() == "0.4.97"  # nicht angehalten, nichts gesichert
+    assert umgebung.srv.laeuft() and app.e.update_gescheitert == ""
+    assert time.monotonic() < u._wieder_ab <= time.monotonic() + serverupdate.BESCHAEFTIGT_WARTEN_S
+    assert any("verschoben" in z for z in umgebung.protokoll)
+
+
+def test_gescheiterter_rueckweg_wird_nicht_von_selbst_wiederholt(umgebung):
+    u, app = umgebung.u, umgebung.app
+    ErsatzInstallation.neu_inhalt = "0.4.98-absturz"
+    ErsatzInstallation.rueckweg_scheitert = True
+    u.pruefen()
+    u.starten("0.4.98")
+    _warten(u)
+    assert app.e.update_gescheitert == "0.4.98", umgebung.protokoll
+    u._naechste, u._wieder_ab = 0, 0
+    u.wenn_faellig()
+    assert not u.laeuft() and len(umgebung.installationen) == 1

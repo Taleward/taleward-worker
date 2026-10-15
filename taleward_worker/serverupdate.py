@@ -1,4 +1,4 @@
-"""Updates für „Alles auf diesem PC“: neue Server-Fassung mit Sicherung vorher und Rückweg (Sicherheit E7).
+"""Updates für „Alles auf diesem PC“: neue Server-Fassung mit Sicherung vorher und Rückweg (Sicherheit).
 
 Es gibt keinen anderen Server, der die Fassung vorgibt – das Programm sucht selbst die neueste freigegebene
 Server-Fassung bei GitHub (`motor.neueste_fassung`, nie zurück unter die laufende). Ablauf, nur wenn gerade nichts
@@ -11,7 +11,10 @@ Hochladen noch Verarbeitung):
    danach noch STABIL_S Sekunden ohne Absturz.
 4. Klappt das nicht: KI-Paket zurück (großes Update: der behaltene alte Ordner, sonst die Paketliste), Sicherung mit
    der alten Fassung zurückspielen, alte Fassung starten. Die gescheiterte Fassung versucht das Programm nicht wieder
-   von selbst – erst eine neuere oder „Jetzt aktualisieren“.
+   von selbst – erst eine neuere oder „Jetzt aktualisieren“. Das gilt auch, wenn der Rückweg selbst scheitert.
+
+Unmittelbar vor dem Anhalten wird die Ruhe noch einmal geprüft (das Vorbereiten kann dauern); kam Arbeit dazu,
+bleibt Taleward unverändert und es geht später weiter.
 """
 from __future__ import annotations
 
@@ -30,6 +33,7 @@ from taleward_worker.selbstupdate import neuer
 PRUEFEN_ALLE_S = 6 * 3600
 ERSTE_PRUEFUNG_NACH_S = 600     # nicht gleich beim Start – erst soll Taleward in Ruhe laufen
 STABIL_S = 20
+BESCHAEFTIGT_WARTEN_S = 1800    # kam beim Anhalten doch noch Arbeit dazu: in einer halben Stunde erneut
 LAEUFT = ("vorbereiten", "sichern", "tauschen", "starten", "pruefen", "zurueck")
 
 
@@ -37,7 +41,7 @@ class ServerUpdate:
     def __init__(self, app):
         self.app = app                  # WorkerApp: e, server, dienst, installation
         self.angebot: str | None = None  # neuere freigegebene Fassung
-        self.phase = ""                 # "" | LAEUFT … | fertig | zurueckgenommen | fehler
+        self.phase = ""                 # "" | LAEUFT … | fertig | zurueckgenommen | fehler | verschoben
         self.fehler = ""
         self.alt = ""
         self.neu = ""
@@ -136,6 +140,8 @@ class ServerUpdate:
         finally:
             if self.phase == "fehler":
                 self._wieder_ab = time.monotonic() + PRUEFEN_ALLE_S
+            elif self.phase == "verschoben":
+                self._wieder_ab = time.monotonic() + BESCHAEFTIGT_WARTEN_S
 
     def _ablauf(self) -> None:
         a = self.app
@@ -148,6 +154,9 @@ class ServerUpdate:
         self.inst = inst
 
         def vor():  # Taleward anhalten und mit der alten Fassung sichern – ohne Sicherung kein Tausch
+            grund = self.beschaeftigt()  # das Vorbereiten kann dauern – inzwischen kann Arbeit dazugekommen sein
+            if grund:
+                raise motor.MotorFehler("beschaeftigt", f"Taleward ist beschäftigt ({grund})")
             self.phase = "sichern"
             angehalten["ja"] = True
             a.dienst.stoppen()
@@ -180,9 +189,13 @@ class ServerUpdate:
         a = self.app
         self.fehler = inst.fehler or "installation"
         if not angehalten:
-            # Download oder Vorbereitung gescheitert: Taleward lief durch, nichts getauscht – später erneut
+            # Download oder Vorbereitung gescheitert bzw. gerade beschäftigt: Taleward lief durch, nichts getauscht
             self.phase = "fehler"
-            self._protokoll(f"Update auf {self.neu} vorbereitet nicht: {inst.fehler} – Taleward läuft unverändert")
+            if inst.fehler == "beschaeftigt":
+                self.phase, self.fehler = "verschoben", "beschaeftigt"
+                self._protokoll(f"Update auf {self.neu} verschoben: {getattr(inst, 'fehlertext', '')} – später noch einmal")
+            else:
+                self._protokoll(f"Update auf {self.neu} vorbereitet nicht: {inst.fehler} – Taleward läuft unverändert")
             return
         if gesichert:
             # Tausch mittendrin gescheitert – der neue Code lief nie, die Daten sind unberührt
@@ -191,7 +204,8 @@ class ServerUpdate:
                 inst.zurueck(vorher)
             except motor.MotorFehler as e:
                 self._protokoll(f"Rückweg des KI-Pakets gescheitert: {e.code} {e.text[-300:]}")
-            self._gescheitert()
+            finally:
+                self._gescheitert()
         else:
             self.phase = "fehler"
             self._protokoll("Sicherung vor dem Update gescheitert – kein Update, Taleward startet wieder")
@@ -224,12 +238,14 @@ class ServerUpdate:
         a = self.app
         self.phase = "zurueck"
         self._protokoll(f"Update auf {self.neu} wird zurückgenommen – zurück auf {self.alt}")
-        a.dienst.stoppen()
-        a.server.stoppen()
-        inst.zurueck(vorher)
-        if datei is not None:
-            self.sicherung_zurueckspielen(datei)
-        self._gescheitert()
+        try:
+            a.dienst.stoppen()
+            a.server.stoppen()
+            inst.zurueck(vorher)
+            if datei is not None:
+                self.sicherung_zurueckspielen(datei)
+        finally:
+            self._gescheitert()  # auch wenn der Rückweg scheitert: diese Fassung nicht von selbst wieder versuchen
         a.server.starten()
 
     def _gescheitert(self) -> None:
