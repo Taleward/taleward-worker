@@ -11,6 +11,10 @@ vor dem Anlegen geschrieben).
 Grenze: Die Regel gilt für das Python im Benutzerordner. Jedes Programm, das dieser Windows-Nutzer mit genau diesem
 Python startet, dürfte auf TCP 8000 aus dem Heimnetz lauschen – solange Taleward läuft, ist der Anschluss belegt.
 
+Der Programmpfad muss im Datenordner des Programms liegen (sonst keine Regel). Gesucht wird nach Regeln für dieses
+Programm per exaktem Vergleich, nicht über `-Program` (das deutet [ und ] im Pfad als Platzhalter). Beim Wechsel zu
+„Mit einem Server verbinden“ bietet das Programm an, die Regel zu entfernen.
+
 Alle PowerShell-Befehle gehen als -EncodedCommand (UTF-16, Base64); Pfade und Namen stehen darin nochmals als Base64
 (UTF-8) – Leerzeichen, Umlaute oder Anführungszeichen jeder Art können so nichts umdeuten.
 """
@@ -66,7 +70,27 @@ def lauschendes_programm() -> Path | None:
     except (OSError, subprocess.SubprocessError):
         return None
     pfad = r.stdout.strip()
-    return Path(pfad) if pfad else None
+    return Path(pfad) if pfad and im_datenordner(Path(pfad)) else None
+
+
+def im_datenordner(programm: Path) -> bool:
+    """Nur ein Python unter dem Datenordner des Programms bekommt eine Regel – nie ein Pfad von anderswo."""
+    try:
+        basis = pfade.basis().resolve()
+        echt = programm.resolve()
+    except (OSError, RuntimeError):
+        return False
+    if not echt.is_absolute() or not echt.name.lower().startswith("python"):
+        return False
+    if WINDOWS:
+        return str(echt).lower().startswith(str(basis).lower().rstrip("\\") + "\\")
+    return echt.is_relative_to(basis)
+
+
+def _filter_fuer(programm: Path) -> str:
+    """Anwendungsfilter genau dieses Programms – exakter Vergleich (ohne Groß-/Kleinschreibung wie Windows-Pfade)."""
+    return (f"(Get-NetFirewallApplicationFilter -All -ErrorAction SilentlyContinue | "
+            f"Where-Object {{ $_.Program -eq {_ps(str(programm))} }})")
 
 
 def regel_lesen(programm: Path | None = None) -> dict | None:
@@ -74,7 +98,7 @@ def regel_lesen(programm: Path | None = None) -> dict | None:
         return None
     fremd = "0"
     if programm is not None:  # andere eingehende, eingeschaltete Regeln für genau dieses Programm
-        fremd = (f"@(Get-NetFirewallApplicationFilter -Program {_ps(str(programm))} -ErrorAction SilentlyContinue | "
+        fremd = (f"@({_filter_fuer(programm)} | "
                  f"Get-NetFirewallRule | Where-Object {{ $_.Name -ne {_ps(REGEL_NAME)} -and $_.Direction -eq 'Inbound' "
                  f"-and [string]$_.Enabled -eq 'True' }}).Count")
     skript = f"""
@@ -109,7 +133,9 @@ def stand() -> dict:
     if not WINDOWS:
         return {"noetig": False}
     programm = lauschendes_programm()
-    return {"noetig": True, "regel": regel_passt(regel_lesen(programm), programm), "profile": netzprofile()}
+    regel = regel_lesen(programm)
+    return {"noetig": True, "regel": regel_passt(regel, programm), "vorhanden": regel is not None,
+            "profile": netzprofile()}
 
 
 def netzprofile() -> list[str]:
@@ -133,7 +159,7 @@ def anlegen_skript(programm: Path) -> str:
 Remove-NetFirewallRule -Name {_ps(REGEL_NAME)} -ErrorAction SilentlyContinue
 Get-NetFirewallRule -DisplayName {_ps(REGEL)} -ErrorAction SilentlyContinue |
   Where-Object {{ $_.Description -eq {_ps(BESCHREIBUNG)} }} | Remove-NetFirewallRule
-Get-NetFirewallApplicationFilter -Program {p} -ErrorAction SilentlyContinue | Get-NetFirewallRule |
+{_filter_fuer(programm)} | Get-NetFirewallRule |
   Where-Object {{ $_.Direction -eq 'Inbound' }} | Remove-NetFirewallRule
 New-NetFirewallRule -Name {_ps(REGEL_NAME)} -DisplayName {_ps(REGEL)} -Description {_ps(BESCHREIBUNG)} `
   -Direction Inbound -Action Allow -Program {p} -Protocol TCP -LocalPort {PORT} -Profile Private `
@@ -154,6 +180,33 @@ def anlegen() -> bool:
         pass
     ok = _als_admin("powershell.exe", " ".join(_kodiert(anlegen_skript(programm))))
     return ok and regel_passt(regel_lesen(programm), programm)
+
+
+def entfernen_skript() -> str:
+    """Nur die eigene Regel (und die gleich beschriebene älterer Fassungen) – wie der Deinstaller."""
+    return f"""Remove-NetFirewallRule -Name {_ps(REGEL_NAME)} -ErrorAction SilentlyContinue
+Get-NetFirewallRule -DisplayName {_ps(REGEL)} -ErrorAction SilentlyContinue |
+  Where-Object {{ $_.Description -eq {_ps(BESCHREIBUNG)} }} | Remove-NetFirewallRule
+"""
+
+
+def vorhanden() -> bool:
+    """Gibt es die eigene Regel noch? (Ohne Rechte prüfbar.)"""
+    return WINDOWS and regel_lesen() is not None
+
+
+def entfernen() -> bool:
+    """Regel entfernen (Windows fragt nach Administratorrechten). Beim Wechsel zu „Mit einem Server verbinden“."""
+    if not WINDOWS:
+        return True
+    ok = _als_admin("powershell.exe", " ".join(_kodiert(entfernen_skript())))
+    if ok and regel_lesen() is None:
+        try:
+            (pfade.basis() / "firewall.txt").unlink(missing_ok=True)
+        except OSError:
+            pass
+        return True
+    return False
 
 
 def _als_admin(programm: str, parameter: str, warten_ms: int = 120_000) -> bool:

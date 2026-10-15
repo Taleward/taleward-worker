@@ -59,9 +59,10 @@ QR-Code bei.
 
 - Die Daten (Kampagnen, Aufnahmen, Konten) liegen unter `%LOCALAPPDATA%\Taleward\Daten`, getrennt vom Programm.
 - Das Fenster hat keinen Zugriff auf die App selbst, öffnet nur Seiten von Taleward auf diesem PC (alles andere im
-  Browser) und darf nur das Mikrofon nutzen.
+  Browser), startet keine anderen Programme über Links (z. B. `mailto:`) und darf nur das Mikrofon nutzen.
 - Die Verbindung im WLAN ist nicht verschlüsselt – gedacht für das eigene WLAN.
-- **Betriebsart wechseln** (Einstellungen) geht in beide Richtungen; die Kampagnen bleiben auf dem PC.
+- **Betriebsart wechseln** (Einstellungen) geht in beide Richtungen; die Kampagnen bleiben auf dem PC. Beim Wechsel zu
+  „Mit einem Server verbinden“ bietet die App an, die Freigabe für Handys im WLAN aus Windows zu entfernen.
 - **Sicherung speichern / zurückspielen** (Einstellungen): eine Datei mit allen Kampagnen, mit Passwort verschlüsselt –
   auch zum Umzug auf einen neuen PC.
 - **Hilfe-Datei erstellen** (Protokoll): Fassungen, System und Protokolle ohne Schlüssel, Passwörter und E-Mail-Adressen;

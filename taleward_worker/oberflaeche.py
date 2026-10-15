@@ -53,9 +53,10 @@ class Api:
         a.e.speichern()
         return {"ok": True}
 
-    def betrieb_wechseln(self, ziel: str) -> dict:
+    def betrieb_wechseln(self, ziel: str, regel_entfernen: bool = False) -> dict:
         """Zwischen „Alles auf diesem PC“ und „Mit einem Server verbinden“ wechseln – in beide Richtungen. Die
-        Kampagnen von „Alles auf diesem PC“ bleiben auf dem PC und sind nach dem Zurückwechseln wieder da."""
+        Kampagnen von „Alles auf diesem PC“ bleiben auf dem PC und sind nach dem Zurückwechseln wieder da.
+        `regel_entfernen` (nur zu „verbunden“, Haken im Dialog): danach die Netzwerk-Freigabe aus Windows nehmen."""
         a = self._app
         if ziel not in ("einzelplatz", "verbunden") or ziel == a.e.art:
             return {"ok": False, "fehler": "unbekannt"}
@@ -64,7 +65,8 @@ class Api:
             return {"ok": False, "fehler": "beschaeftigt"}
         if a.dienst.zustand.get("art") == "arbeitet":
             return {"ok": False, "fehler": "arbeitet"}
-        threading.Thread(target=a.betrieb_wechseln, args=(ziel,), daemon=True, name="betrieb").start()
+        threading.Thread(target=a.betrieb_wechseln, args=(ziel, bool(regel_entfernen) and ziel == "verbunden"),
+                         daemon=True, name="betrieb").start()
         return {"ok": True}
 
     def konto_anlegen(self, name: str, passwort: str, passwort2: str) -> dict:
@@ -396,7 +398,7 @@ class WorkerApp:
             return
         self.server.starten(startschluessel=not self.e.konto_angelegt)
 
-    def betrieb_wechseln(self, ziel: str) -> None:
+    def betrieb_wechseln(self, ziel: str, regel_entfernen: bool = False) -> None:
         """Anhalten, was zur bisherigen Betriebsart gehört, und in die neue wechseln. Zu „Mit einem Server
         verbinden“ geht es mit Adresse und Kopplungscode weiter; zu „Alles auf diesem PC“ startet Taleward hier
         (beim ersten Mal mit Konto anlegen, sonst mit den Kampagnen von vorher)."""
@@ -410,6 +412,11 @@ class WorkerApp:
         self.server_version = self.server_name = None
         self.dienst.protokoll.schreiben("Betriebsart gewechselt: " + (
             "Alles auf diesem PC" if ziel == "einzelplatz" else "Mit einem Server verbinden"))
+        if regel_entfernen:
+            entfernt = netzfreigabe.entfernen()
+            self.dienst.protokoll.schreiben("Netzwerk-Freigabe entfernt" if entfernt
+                                            else "Netzwerk-Freigabe nicht entfernt (abgelehnt oder gescheitert)")
+            self.netz_pruefen()
         if ziel == "einzelplatz":
             self.hardware = hardware.bericht()
             if self.motor_passt_einzelplatz():

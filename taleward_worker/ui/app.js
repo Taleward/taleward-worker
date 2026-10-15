@@ -250,6 +250,7 @@
     const hinweis_upd = upd.phase === "vorbereiten" ? t("tw_upd_vorbereiten", werte)
       : upd.phase === "zurueckgenommen" ? t("tw_upd_zurueckgenommen", werte)
       : upd.phase === "fehler" ? t("tw_upd_fehler", werte)
+      : upd.phase === "verschoben" ? t("tw_upd_verschoben", werte)
       : upd.phase === "fertig" ? t("tw_upd_fertig", werte)
       : !imUpdate && upd.angebot ? t(S.einstellungen.auto_update && upd.angebot !== upd.gescheitert ? "tw_upd_angebot_auto" : "tw_upd_angebot", werte) : "";
     um.hidden = !hinweis_upd;
@@ -449,6 +450,9 @@
       $("#betrieb-frage").textContent = t("betrieb_zu_verbunden");
       $("#betrieb-folge").textContent = t("betrieb_zu_verbunden_folge");
     }
+    const netz = (S.taleward && S.taleward.netz) || {};
+    $("#betrieb-regel-zeile").hidden = !(zu === "verbunden" && netz.noetig && netz.vorhanden);
+    $("#betrieb-regel").checked = true;
     dialogOeffnen("betrieb", t(zu === "einzelplatz" ? "betrieb_titel_einzelplatz" : "betrieb_titel_verbunden"), t("Wechseln"));
     $("#dialog-ok").dataset.ziel = zu;
   }
@@ -463,7 +467,8 @@
     ok.disabled = true;
     try {
       if (dialogArt === "betrieb") {
-        const r = await api.betrieb_wechseln(ok.dataset.ziel);
+        const regelWeg = !$("#betrieb-regel-zeile").hidden && $("#betrieb-regel").checked;
+        const r = await api.betrieb_wechseln(ok.dataset.ziel, regelWeg);
         if (!r.ok) return dialogFehler(feldfehler("betrieb_f_", r.fehler));
         dialogZu(); fertigZeigen = false; schritt = null; reiter = "status";
         setTimeout(neuLaden, 300);

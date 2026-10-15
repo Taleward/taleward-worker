@@ -145,3 +145,163 @@ def test_offenes_ollama_auf_dem_eigenen_port_nicht_im_einzelplatz(monkeypatch):
     monkeypatch.setattr(ollama, "installiert", lambda: False)
     assert d.adresse(True) == d.eigene_adresse                    # mit einem Server verbunden: wie bisher
     assert d.adresse(True, nur_geschlossen=True) == ollama.AUS    # auch im Heimnetz offen → nicht übernehmen
+
+
+# ---------------------------------------------------------------- 0.3.5: Regeln vor der App, fremde Schemata
+def test_web_adresse_nur_ascii():
+    from taleward_worker.fenster import web_adresse
+
+    assert not web_adresse("https://täleward.org/") and not web_adresse("https://taleward.org/straße")
+    assert web_adresse("https://xn--tleward-b1a.org/hilfe")
+
+
+class _Ereignis:
+    def __init__(self):
+        self.handler = []
+
+    def __iadd__(self, h):
+        self.handler.append(h)
+        return self
+
+
+class _Fenster:
+    def __init__(self, **k):
+        self.k = k
+        self.events = type("E", (), {})()
+        self.events.loaded, self.events.closed = _Ereignis(), _Ereignis()
+        self.geladen = []
+
+    def load_url(self, url):
+        self.geladen.append(url)
+
+
+def test_app_fenster_laedt_erst_eine_leere_seite(monkeypatch):
+    import webview
+
+    from taleward_worker import fenster
+
+    erzeugt = []
+    monkeypatch.setattr(webview, "create_window", lambda titel, url=None, **k: erzeugt.append(
+        _Fenster(url=url, **k)) or erzeugt[-1])
+    monkeypatch.setattr(fenster.sys, "platform", "linux")
+    w = fenster.app_fenster("http://localhost:8000/app/")
+    assert w.k["url"] is None and "<body" in w.k["html"]  # nicht gleich die App
+    for h in w.events.loaded.handler:
+        h()
+    assert w.geladen == ["http://localhost:8000/app/"]
+    for h in w.events.loaded.handler:  # weitere Ladevorgänge ändern nichts
+        h()
+    assert w.geladen == ["http://localhost:8000/app/"]
+    import pytest
+
+    with pytest.raises(ValueError):
+        fenster.app_fenster("https://boese.example/")
+
+
+def _webview2_attrappe(monkeypatch, mit_schema_ereignis=True):
+    import sys
+    import types
+
+    class Core:
+        def __init__(self):
+            self.NavigationStarting, self.FrameNavigationStarting = _Ereignis(), _Ereignis()
+            self.PermissionRequested = _Ereignis()
+            if mit_schema_ereignis:
+                self.LaunchingExternalUriScheme = _Ereignis()
+            self.Settings = types.SimpleNamespace()
+            self.aufrufe = []
+
+        def Navigate(self, url):
+            self.aufrufe.append(("navigate", url, len(self.NavigationStarting.handler)))
+
+    core = Core()
+    form = types.SimpleNamespace(browser=types.SimpleNamespace(webview=types.SimpleNamespace(CoreWebView2=core)),
+                                 Invoke=lambda aktion: aktion())
+    system = types.ModuleType("System")
+    system.Action = lambda f: f
+    kern = types.ModuleType("Microsoft.Web.WebView2.Core")
+    kern.CoreWebView2PermissionKind = types.SimpleNamespace(Microphone="mic")
+    kern.CoreWebView2PermissionState = types.SimpleNamespace(Allow="allow", Deny="deny")
+    for name, modul in (("System", system), ("Microsoft", types.ModuleType("Microsoft")),
+                        ("Microsoft.Web", types.ModuleType("Microsoft.Web")),
+                        ("Microsoft.Web.WebView2", types.ModuleType("Microsoft.Web.WebView2")),
+                        ("Microsoft.Web.WebView2.Core", kern)):
+        monkeypatch.setitem(sys.modules, name, modul)
+    return core, form
+
+
+def test_unter_windows_regeln_vor_der_app_und_keine_fremden_schemata(monkeypatch):
+    import types
+
+    from taleward_worker import fenster
+
+    core, form = _webview2_attrappe(monkeypatch)
+    monkeypatch.setattr(fenster.sys, "platform", "win32")
+    w = types.SimpleNamespace(native=form)
+    fenster.abdichten(w, "http://localhost:8000/app/")
+    assert w._taleward_dicht and core.Settings.AreDevToolsEnabled is False
+    assert core.aufrufe == [("navigate", "http://localhost:8000/app/", 1)]  # App erst nach den Regeln
+    args = types.SimpleNamespace(Uri="ms-settings:privacy", Cancel=False)
+    core.LaunchingExternalUriScheme.handler[0](None, args)
+    assert args.Cancel is True
+    fenster.abdichten(w, "http://localhost:8000/app/")  # zweites Laden: nichts mehr
+    assert len(core.aufrufe) == 1
+
+
+def test_aeltere_webview2_ohne_schema_ereignis(monkeypatch):
+    import types
+
+    from taleward_worker import fenster
+
+    core, form = _webview2_attrappe(monkeypatch, mit_schema_ereignis=False)
+    monkeypatch.setattr(fenster.sys, "platform", "win32")
+    w = types.SimpleNamespace(native=form, destroy=lambda: (_ for _ in ()).throw(AssertionError("geschlossen")))
+    fenster.abdichten(w, "http://localhost:8000/app/")
+    assert w._taleward_dicht and core.aufrufe
+
+
+def test_firewall_nur_fuer_python_im_datenordner(monkeypatch, tmp_path):
+    from taleward_worker import netzfreigabe as nf
+
+    monkeypatch.setenv("TALEWARD_WORKER_HOME", str(tmp_path / "Taleward Worker"))
+    basis = tmp_path / "Taleward Worker"
+    py = basis / "python" / "cpython-3.11" / "bin" / "python3.11"
+    py.parent.mkdir(parents=True)
+    py.write_text("")
+    assert nf.im_datenordner(py)
+    fremd = tmp_path / "anderswo" / "python.exe"
+    fremd.parent.mkdir()
+    fremd.write_text("")
+    assert not nf.im_datenordner(fremd)
+    assert not nf.im_datenordner(basis / ".." / "anderswo" / "python.exe")  # nicht über ..
+    assert not nf.im_datenordner(basis / "python" / "cmd.exe")              # nur ein Python
+    (tmp_path / "Taleward Worker-boese").mkdir()
+    assert not nf.im_datenordner(tmp_path / "Taleward Worker-boese" / "python.exe")  # gleicher Anfang zählt nicht
+
+
+def test_firewall_suche_ohne_platzhalter():
+    """[ ] im Benutzernamen: nicht über -Program suchen (Platzhalter), sondern exakt vergleichen."""
+    from pathlib import Path
+
+    from taleward_worker import netzfreigabe as nf
+
+    py = Path(r"C:\Users\Kai [Spiele]\AppData\Local\Taleward Worker\python\python.exe")
+    skript = nf.anlegen_skript(py)
+    assert "$_.Program -eq " + nf._ps(str(py)) in skript and "Get-NetFirewallApplicationFilter -All" in skript
+    assert "Get-NetFirewallApplicationFilter -Program" not in skript
+
+
+def test_firewall_regel_entfernen(monkeypatch, tmp_path):
+    from taleward_worker import netzfreigabe as nf
+
+    skript = nf.entfernen_skript()
+    assert "-Name " + nf._ps(nf.REGEL_NAME) in skript and "Remove-NetFirewallRule -DisplayName" not in skript
+    monkeypatch.setenv("TALEWARD_WORKER_HOME", str(tmp_path))
+    (tmp_path / "firewall.txt").write_text(nf.REGEL_NAME)
+    monkeypatch.setattr(nf, "WINDOWS", True)
+    monkeypatch.setattr(nf, "_als_admin", lambda programm, parameter: True)
+    monkeypatch.setattr(nf, "regel_lesen", lambda programm=None: None)
+    assert nf.entfernen() and not (tmp_path / "firewall.txt").exists()
+    (tmp_path / "firewall.txt").write_text(nf.REGEL_NAME)
+    monkeypatch.setattr(nf, "_als_admin", lambda programm, parameter: False)  # „Nein“ bei der Rückfrage
+    assert not nf.entfernen() and (tmp_path / "firewall.txt").exists()
