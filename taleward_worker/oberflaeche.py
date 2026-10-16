@@ -333,8 +333,8 @@ class Api:
         if url.startswith("https://"):
             webbrowser.open(url)
 
-    def verwaltung_oeffnen(self) -> None:
-        self._app.verwaltung_oeffnen()
+    def verwaltung_oeffnen(self, seite: str = "") -> None:
+        self._app.verwaltung_oeffnen(seite)
 
     def fenster_verstecken(self) -> None:
         self._app.verstecken()
@@ -477,10 +477,12 @@ class WorkerApp:
             self.dienst.starten()
         self.tray_aktualisieren()
 
-    def _netz_beim_ersten_mal(self) -> None:
+    def _netz_beim_ersten_mal(self, nach_installation: bool = False) -> None:
         """Nach dem Installieren, vor dem ersten Start: Firewall-Regel anlegen, damit Windows nicht seine eigene,
-        viel weitere Rückfrage zeigt. Lehnt jemand ab, fragt das Programm nicht wieder von selbst."""
-        if not netzfreigabe.WINDOWS or self.e.firewall_gefragt:
+        viel weitere Rückfrage („Python“) zeigt. Lehnt jemand ab, fragt das Programm beim normalen Start nicht wieder
+        von selbst. Nach einer (Neu-)Installation des KI-Pakets aber schon, wenn die Regel fehlt – etwa nach dem
+        Deinstallieren und Neuinstallieren, das die Regel entfernt, die Einstellungen aber behält."""
+        if not netzfreigabe.WINDOWS or (self.e.firewall_gefragt and not nach_installation):
             return
         self.e.firewall_gefragt = True
         self.e.speichern()
@@ -509,11 +511,14 @@ class WorkerApp:
             webbrowser.open(einzelplatz.APP_ADRESSE)
         return True
 
-    def verwaltung_oeffnen(self) -> None:
+    VERWALTUNG_SEITEN = {"": "", "transkription#hf": "/transkription#hf"}  # nur feste Ziele aus der Oberfläche
+
+    def verwaltung_oeffnen(self, seite: str = "") -> None:
         """Nur bei „Alles auf diesem PC“ (dort ist die Spielleitung Verwalter). Beim Verbinden gehört die Verwaltung
         dem Betreiber des Servers – kein Knopf dafür im Programm."""
         if self.e.einzelplatz:
-            webbrowser.open(einzelplatz.ADRESSE + "/verwaltung")  # nur vom PC selbst erreichbar
+            pfad = self.VERWALTUNG_SEITEN.get(seite or "", "")
+            webbrowser.open(einzelplatz.ADRESSE + "/verwaltung" + pfad)  # nur vom PC selbst erreichbar
 
     def programm_in_den_hintergrund(self) -> None:
         """Nach „Taleward öffnen“: Programmfenster in den Infobereich (ohne Infobereich bleibt es, wie es ist)."""
@@ -591,7 +596,8 @@ class WorkerApp:
                 self.e.motor_art = "test" if testmodus else "ki"
                 self.e.speichern()
             if self.e.einzelplatz:
-                self._netz_beim_ersten_mal()
+                self._netz_beim_ersten_mal(nach_installation=self.installation is not None
+                                           and self.installation.phase != "fehler")
                 self.taleward_starten()
             elif self.e.gekoppelt:
                 self.dienst.starten()
@@ -883,7 +889,7 @@ class WorkerApp:
         breite, hoehe, mindestens = fenstergroesse(bildschirm_hoehe())
         self.fenster = webview.create_window(
             "Taleward", str(pfade.ressourcen() / "ui" / "index.html"), js_api=Api(self),
-            width=breite, height=hoehe, min_size=mindestens, background_color="#F2E8D5",
+            width=breite, height=hoehe, min_size=mindestens, background_color=fenster.papier(),
             hidden=versteckt and self.tray is not None, minimized=versteckt and self.tray is None)
         self.fenster.events.closing += self._beim_schliessen
         threading.Thread(target=self._hintergrund_pflege, daemon=True, name="pflege").start()
@@ -894,6 +900,11 @@ class WorkerApp:
         webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
         speicher = pfade.fenster_speicher()
         fenster.zwischenspeicher_leeren(speicher, VERSION)
+        try:  # Programmdatei heißt seit 0.3.9 Taleward.exe: vorhandenen Autostart-Eintrag mitnehmen
+            if autostart.nachfuehren():
+                self.dienst.protokoll.schreiben("Autostart auf das umbenannte Programm umgestellt")
+        except OSError:
+            pass
         # Eigener freier Anschluss für die Programmoberfläche: pywebview nähme mit dauerhaftem Speicher sonst immer
         # denselben (42001) – dann lieferte WebView2 nach einem Update alte Seiten aus dem Zwischenspeicher, und ein
         # anderes Programm könnte den Anschluss vorher belegen. Die Oberfläche speichert selbst nichts im Browser.

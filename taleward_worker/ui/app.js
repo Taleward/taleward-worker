@@ -289,8 +289,8 @@
     } else if (art === "startet" && z.modelle) {
       text = t("st_modelle_text", { mb: gb(z.modelleMb || 0) });
     } else if (art === "fehler" && z.code === "modell") {
-      titel = t("st_modell");
-      text = t("st_modell_text", { wann: wann(z.neuerVersuch) });
+      titel = t(einzelplatz() ? "st_modell_hier" : "st_modell");
+      text = t(einzelplatz() ? "st_modell_hier_text" : "st_modell_text", { wann: wann(z.neuerVersuch) });
     } else if (art === "fehler") {
       text = z.text || t("f_" + (z.code || "einrichtung"));
     }
@@ -366,7 +366,11 @@
     if (["warte", "arbeitet", "getrennt", "startet", "server_pausiert"].includes(art)) liste.push(["Pausieren", "secondary", () => api.pausieren(true)]);
     if (art === "pausiert") liste.push(["Fortsetzen", "primary", () => api.pausieren(false)]);
     if (art === "gestoppt") liste.push(["Starten", "primary", () => api.starten()]);
-    if (art === "fehler" || art === "abgestuerzt") {
+    if (art === "fehler" && S.dienst.zustand.code === "modell" && einzelplatz()) {
+      // Stimmen erkennen einrichten: genau die Stelle in der Verwaltung, mit Anleitung (Quelle der Wahrheit für den Weg)
+      liste.push(["Stimmen erkennen einrichten", "primary", () => api.verwaltung_oeffnen("transkription#hf")]);
+      liste.push(["Protokoll ansehen", "quiet", () => zeigeReiter("protokoll")]);
+    } else if (art === "fehler" || art === "abgestuerzt") {
       if (["motor_fehlt", "motor_kaputt"].includes(S.dienst.zustand.code || "")) liste.push(["Installieren", "primary", () => { schritt = 2; }]);
       else liste.push(["Erneut versuchen", "primary", () => api.starten()]);
       liste.push(["Protokoll ansehen", "quiet", () => zeigeReiter("protokoll")]);

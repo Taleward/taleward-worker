@@ -20,7 +20,7 @@ PrivilegesRequired=lowest
 OutputDir=..\..\dist
 OutputBaseFilename=TalewardWorker-Setup
 SetupIconFile=taleward-worker.ico
-UninstallDisplayIcon={app}\TalewardWorker.exe
+UninstallDisplayIcon={app}\Taleward.exe
 WizardStyle=modern
 WizardImageFile=installer-seite.bmp
 WizardSmallImageFile=installer-klein.bmp
@@ -62,28 +62,33 @@ Name: "autostart"; Description: "{cm:Autostart}"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-Source: "..\..\dist\TalewardWorker\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Die Programmdatei heißt ab 0.3.9 Taleward.exe. Gebaut wird sie weiter als TalewardWorker.exe (Build und Prüfschritt
+; bleiben gleich) und erst hier umbenannt; die alte Datei wird beim Update entfernt.
+Source: "..\..\dist\TalewardWorker\*"; DestDir: "{app}"; Excludes: "TalewardWorker.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\..\dist\TalewardWorker\TalewardWorker.exe"; DestDir: "{app}"; DestName: "Taleward.exe"; Flags: ignoreversion
 
 [Icons]
-Name: "{userprograms}\Taleward"; Filename: "{app}\TalewardWorker.exe"
-Name: "{userdesktop}\Taleward"; Filename: "{app}\TalewardWorker.exe"; Tasks: desktopicon
+Name: "{userprograms}\Taleward"; Filename: "{app}\Taleward.exe"
+Name: "{userdesktop}\Taleward"; Filename: "{app}\Taleward.exe"; Tasks: desktopicon
 
 [InstallDelete]
 ; Bis 0.3.0 hießen die Verknüpfungen „Taleward Worker“ – beim Update nicht doppelt stehen lassen
 Type: files; Name: "{userprograms}\Taleward Worker.lnk"
 Type: files; Name: "{userdesktop}\Taleward Worker.lnk"
+; Bis 0.3.8 hieß die Programmdatei TalewardWorker.exe (Autostart-Eintrag stellt das Programm beim Start selbst um)
+Type: files; Name: "{app}\TalewardWorker.exe"
 
 [Registry]
 ; Gleicher Eintrag, den die App unter Einstellungen → „Mit dem Computer starten“ setzt oder entfernt
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Taleward Worker"; \
-  ValueData: """{app}\TalewardWorker.exe"" --hintergrund"; Tasks: autostart; Flags: uninsdeletevalue; Check: not WizardSilent
+  ValueData: """{app}\Taleward.exe"" --hintergrund"; Tasks: autostart; Flags: uninsdeletevalue; Check: not WizardSilent
 ; (nicht bei stillen Updates: Inno würde sonst den beim ersten Mal gewählten Autostart wieder einschalten,
 ;  auch wenn er in der App inzwischen abgeschaltet wurde)
 
 [Run]
-Filename: "{app}\TalewardWorker.exe"; Description: "{cm:Starten}"; Flags: nowait postinstall skipifsilent runasoriginaluser
+Filename: "{app}\Taleward.exe"; Description: "{cm:Starten}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 ; Update aus der App (still): danach die App im Hintergrund wieder starten
-Filename: "{app}\TalewardWorker.exe"; Parameters: "--hintergrund"; Flags: nowait runasoriginaluser; Check: WizardSilent
+Filename: "{app}\Taleward.exe"; Parameters: "--hintergrund"; Flags: nowait runasoriginaluser; Check: WizardSilent
 
 [Code]
 const
@@ -114,13 +119,19 @@ begin
   LadeSeite := CreateDownloadPage(SetupMessage(msgWizardPreparing), CustomMessage('WebView2Laden'), nil);
 end;
 
-function AppLaeuft(): Boolean;
+function LaeuftAls(Name: String): Boolean;
 var
   Code: Integer;
 begin
   { find liefert 0, wenn tasklist die App aufführt }
-  Result := Exec(ExpandConstant('{cmd}'), '/C tasklist /FI "IMAGENAME eq TalewardWorker.exe" | find /I "TalewardWorker.exe" >nul',
+  Result := Exec(ExpandConstant('{cmd}'), '/C tasklist /FI "IMAGENAME eq ' + Name + '" | find /I "' + Name + '" >nul',
                  '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
+end;
+
+function AppLaeuft(): Boolean;
+begin
+  { bis 0.3.8 hieß die Programmdatei TalewardWorker.exe }
+  Result := LaeuftAls('Taleward.exe') or LaeuftAls('TalewardWorker.exe');
 end;
 
 procedure LaufendeAppBeenden();
@@ -132,7 +143,9 @@ begin
     selbst beenden (--beenden spricht die laufende Instanz an) und bis 15 s warten; was dann noch läuft
     (alte Fassungen ohne --beenden), wird samt Kindprozessen abgeschossen }
   if not AppLaeuft() then Exit;
-  Exe := ExpandConstant('{app}\TalewardWorker.exe');
+  Exe := ExpandConstant('{app}\Taleward.exe');
+  if not FileExists(Exe) then
+    Exe := ExpandConstant('{app}\TalewardWorker.exe');
   if FileExists(Exe) then
   begin
     Exec(Exe, '--beenden', '', SW_HIDE, ewNoWait, Code);
@@ -144,7 +157,10 @@ begin
     end;
   end;
   if AppLaeuft() then
+  begin
+    Exec(ExpandConstant('{cmd}'), '/C taskkill /IM Taleward.exe /F /T', '', SW_HIDE, ewWaitUntilTerminated, Code);
     Exec(ExpandConstant('{cmd}'), '/C taskkill /IM TalewardWorker.exe /F /T', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  end;
 end;
 
 procedure WebView2Einrichten();

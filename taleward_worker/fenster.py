@@ -110,7 +110,32 @@ class KeineBruecke:
         return None
 
 
-LEER = '<!doctype html><meta charset="utf-8"><title>Taleward</title><body style="background:#F2E8D5"></body>'
+# Seitenfarbe aus den Marken-Tokens: Pergament hell, dunkles Thema „--paper“ – sonst blitzt das Fenster im dunklen
+# Windows beim Start hell auf
+PAPIER_HELL, PAPIER_DUNKEL = "#F2E8D5", "#121D22"
+
+
+def dunkel() -> bool:
+    """Windows im dunklen Thema für Apps? (Andere Systeme und Fehler: hell.)"""
+    if sys.platform != "win32":
+        return False
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+            return winreg.QueryValueEx(k, "AppsUseLightTheme")[0] == 0
+    except OSError:
+        return False
+
+
+def papier() -> str:
+    return PAPIER_DUNKEL if dunkel() else PAPIER_HELL
+
+
+def leer() -> str:
+    return ('<!doctype html><meta charset="utf-8"><title>Taleward</title>'
+            f'<body style="background:{papier()}"></body>')
 
 
 def app_fenster(adresse: str, geschlossen=None):
@@ -119,8 +144,8 @@ def app_fenster(adresse: str, geschlossen=None):
 
     if not eigene_seite(adresse):
         raise ValueError("nur die App auf diesem PC")
-    w = webview.create_window("Taleward", html=LEER, js_api=KeineBruecke(), width=1180, height=820,
-                              min_size=(420, 560), background_color="#F2E8D5", text_select=True)
+    w = webview.create_window("Taleward", html=leer(), js_api=KeineBruecke(), width=1180, height=820,
+                              min_size=(420, 560), background_color=papier(), text_select=True)
     w.events.loaded += lambda: abdichten(w, adresse)
     if geschlossen:
         w.events.closed += geschlossen

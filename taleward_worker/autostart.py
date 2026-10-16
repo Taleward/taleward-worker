@@ -38,6 +38,33 @@ def aktiv() -> bool:
     return _linux_datei().exists()
 
 
+def eintrag() -> str | None:
+    """Der gespeicherte Startbefehl (nur Windows), None ohne Eintrag."""
+    if sys.platform != "win32":
+        return None
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, SCHLUESSEL) as k:
+            return str(winreg.QueryValueEx(k, NAME)[0])
+    except OSError:
+        return None
+
+
+def nachfuehren() -> bool:
+    """Zeigt ein vorhandener Eintrag auf ein anderes Programm (z. B. TalewardWorker.exe vor der Umbenennung in
+    Taleward.exe), auf das laufende umschreiben. Ohne Eintrag bleibt es aus. True, wenn umgeschrieben."""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return False
+    import subprocess
+
+    alt = eintrag()
+    if alt is None or alt == subprocess.list2cmdline(befehl()):
+        return False
+    setzen(True)
+    return True
+
+
 def setzen(an: bool) -> None:
     if sys.platform == "win32":
         import subprocess
