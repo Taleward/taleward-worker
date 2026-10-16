@@ -1,0 +1,483 @@
+From 57a4ba49db3a186251e44fbc9a8ff507f4f780ee Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Fri, 16 Oct 2026 17:22:01 +0200
+Subject: [PATCH] Worker: Programmdatei Taleward.exe, Stimmen erkennen
+ einrichten, Fenster im dunklen Thema, Firewall-Regel nach dem Neuinstallieren
+
+---
+ packaging/windows/taleward-worker.iss |  36 +++++++---
+ pyproject.toml                        |   2 +-
+ taleward_worker/__init__.py           |   2 +-
+ taleward_worker/autostart.py          |  27 +++++++
+ taleward_worker/fenster.py            |  31 +++++++-
+ taleward_worker/oberflaeche.py        |  29 +++++---
+ taleward_worker/ui/app.js             |  10 ++-
+ taleward_worker/ui/texte.js           |  18 ++---
+ tests/test_worker_039.py              | 100 ++++++++++++++++++++++++++
+ uv.lock                               |   2 +-
+ 10 files changed, 221 insertions(+), 36 deletions(-)
+ create mode 100644 tests/test_worker_039.py
+
+diff --git a/packaging/windows/taleward-worker.iss b/packaging/windows/taleward-worker.iss
+index 2a32cd2..9d1a275 100644
+--- a/packaging/windows/taleward-worker.iss
++++ b/packaging/windows/taleward-worker.iss
+@@ -21,5 +21,5 @@ OutputDir=..\..\dist
+ OutputBaseFilename=TalewardWorker-Setup
+ SetupIconFile=taleward-worker.ico
+-UninstallDisplayIcon={app}\TalewardWorker.exe
++UninstallDisplayIcon={app}\Taleward.exe
+ WizardStyle=modern
+ WizardImageFile=installer-seite.bmp
+@@ -63,9 +63,12 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
+ 
+ [Files]
+-Source: "..\..\dist\TalewardWorker\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
++; Die Programmdatei heißt ab 0.3.9 Taleward.exe. Gebaut wird sie weiter als TalewardWorker.exe (Build und Prüfschritt
++; bleiben gleich) und erst hier umbenannt; die alte Datei wird beim Update entfernt.
++Source: "..\..\dist\TalewardWorker\*"; DestDir: "{app}"; Excludes: "TalewardWorker.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
++Source: "..\..\dist\TalewardWorker\TalewardWorker.exe"; DestDir: "{app}"; DestName: "Taleward.exe"; Flags: ignoreversion
+ 
+ [Icons]
+-Name: "{userprograms}\Taleward"; Filename: "{app}\TalewardWorker.exe"
+-Name: "{userdesktop}\Taleward"; Filename: "{app}\TalewardWorker.exe"; Tasks: desktopicon
++Name: "{userprograms}\Taleward"; Filename: "{app}\Taleward.exe"
++Name: "{userdesktop}\Taleward"; Filename: "{app}\Taleward.exe"; Tasks: desktopicon
+ 
+ [InstallDelete]
+@@ -73,16 +76,18 @@ Name: "{userdesktop}\Taleward"; Filename: "{app}\TalewardWorker.exe"; Tasks: des
+ Type: files; Name: "{userprograms}\Taleward Worker.lnk"
+ Type: files; Name: "{userdesktop}\Taleward Worker.lnk"
++; Bis 0.3.8 hieß die Programmdatei TalewardWorker.exe (Autostart-Eintrag stellt das Programm beim Start selbst um)
++Type: files; Name: "{app}\TalewardWorker.exe"
+ 
+ [Registry]
+ ; Gleicher Eintrag, den die App unter Einstellungen → „Mit dem Computer starten“ setzt oder entfernt
+ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Taleward Worker"; \
+-  ValueData: """{app}\TalewardWorker.exe"" --hintergrund"; Tasks: autostart; Flags: uninsdeletevalue; Check: not WizardSilent
++  ValueData: """{app}\Taleward.exe"" --hintergrund"; Tasks: autostart; Flags: uninsdeletevalue; Check: not WizardSilent
+ ; (nicht bei stillen Updates: Inno würde sonst den beim ersten Mal gewählten Autostart wieder einschalten,
+ ;  auch wenn er in der App inzwischen abgeschaltet wurde)
+ 
+ [Run]
+-Filename: "{app}\TalewardWorker.exe"; Description: "{cm:Starten}"; Flags: nowait postinstall skipifsilent runasoriginaluser
++Filename: "{app}\Taleward.exe"; Description: "{cm:Starten}"; Flags: nowait postinstall skipifsilent runasoriginaluser
+ ; Update aus der App (still): danach die App im Hintergrund wieder starten
+-Filename: "{app}\TalewardWorker.exe"; Parameters: "--hintergrund"; Flags: nowait runasoriginaluser; Check: WizardSilent
++Filename: "{app}\Taleward.exe"; Parameters: "--hintergrund"; Flags: nowait runasoriginaluser; Check: WizardSilent
+ 
+ [Code]
+@@ -115,13 +120,19 @@ begin
+ end;
+ 
+-function AppLaeuft(): Boolean;
++function LaeuftAls(Name: String): Boolean;
+ var
+   Code: Integer;
+ begin
+   { find liefert 0, wenn tasklist die App aufführt }
+-  Result := Exec(ExpandConstant('{cmd}'), '/C tasklist /FI "IMAGENAME eq TalewardWorker.exe" | find /I "TalewardWorker.exe" >nul',
++  Result := Exec(ExpandConstant('{cmd}'), '/C tasklist /FI "IMAGENAME eq ' + Name + '" | find /I "' + Name + '" >nul',
+                  '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
+ end;
+ 
++function AppLaeuft(): Boolean;
++begin
++  { bis 0.3.8 hieß die Programmdatei TalewardWorker.exe }
++  Result := LaeuftAls('Taleward.exe') or LaeuftAls('TalewardWorker.exe');
++end;
++
+ procedure LaufendeAppBeenden();
+ var
+@@ -133,5 +144,7 @@ begin
+     (alte Fassungen ohne --beenden), wird samt Kindprozessen abgeschossen }
+   if not AppLaeuft() then Exit;
+-  Exe := ExpandConstant('{app}\TalewardWorker.exe');
++  Exe := ExpandConstant('{app}\Taleward.exe');
++  if not FileExists(Exe) then
++    Exe := ExpandConstant('{app}\TalewardWorker.exe');
+   if FileExists(Exe) then
+   begin
+@@ -145,5 +158,8 @@ begin
+   end;
+   if AppLaeuft() then
++  begin
++    Exec(ExpandConstant('{cmd}'), '/C taskkill /IM Taleward.exe /F /T', '', SW_HIDE, ewWaitUntilTerminated, Code);
+     Exec(ExpandConstant('{cmd}'), '/C taskkill /IM TalewardWorker.exe /F /T', '', SW_HIDE, ewWaitUntilTerminated, Code);
++  end;
+ end;
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index 5b0a9ea..8a3d94b 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-worker"
+-version = "0.3.8"
++version = "0.3.9"
+ description = "Taleward Worker – verarbeitet Aufnahmen für einen Taleward-Server auf dem eigenen PC mit Grafikkarte"
+ license = "AGPL-3.0-only"
+diff --git a/taleward_worker/__init__.py b/taleward_worker/__init__.py
+index 2877a77..a8e573d 100644
+--- a/taleward_worker/__init__.py
++++ b/taleward_worker/__init__.py
+@@ -4,5 +4,5 @@ Die App selbst ist klein. Das KI-Paket (Taleward-Server mit WhisperX, einige GB)
+ passender Fassung zum verbundenen Server und startet es als Unterprozess („chronik worker --app“).
+ """
+-VERSION = "0.3.8"
++VERSION = "0.3.9"
+ REPO = "Taleward/taleward-server"        # Server-Code = KI-Paket (engine-requirements.txt, Tags v…)
+ APP_REPO = "Taleward/taleward-worker"   # diese App
+diff --git a/taleward_worker/autostart.py b/taleward_worker/autostart.py
+index a9c7199..a909bb7 100644
+--- a/taleward_worker/autostart.py
++++ b/taleward_worker/autostart.py
+@@ -39,4 +39,31 @@ def aktiv() -> bool:
+ 
+ 
++def eintrag() -> str | None:
++    """Der gespeicherte Startbefehl (nur Windows), None ohne Eintrag."""
++    if sys.platform != "win32":
++        return None
++    import winreg
++
++    try:
++        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, SCHLUESSEL) as k:
++            return str(winreg.QueryValueEx(k, NAME)[0])
++    except OSError:
++        return None
++
++
++def nachfuehren() -> bool:
++    """Zeigt ein vorhandener Eintrag auf ein anderes Programm (z. B. TalewardWorker.exe vor der Umbenennung in
++    Taleward.exe), auf das laufende umschreiben. Ohne Eintrag bleibt es aus. True, wenn umgeschrieben."""
++    if sys.platform != "win32" or not getattr(sys, "frozen", False):
++        return False
++    import subprocess
++
++    alt = eintrag()
++    if alt is None or alt == subprocess.list2cmdline(befehl()):
++        return False
++    setzen(True)
++    return True
++
++
+ def setzen(an: bool) -> None:
+     if sys.platform == "win32":
+diff --git a/taleward_worker/fenster.py b/taleward_worker/fenster.py
+index 88fb7e8..6e3bd7b 100644
+--- a/taleward_worker/fenster.py
++++ b/taleward_worker/fenster.py
+@@ -111,5 +111,30 @@ class KeineBruecke:
+ 
+ 
+-LEER = '<!doctype html><meta charset="utf-8"><title>Taleward</title><body style="background:#F2E8D5"></body>'
++# Seitenfarbe aus den Marken-Tokens: Pergament hell, dunkles Thema „--paper“ – sonst blitzt das Fenster im dunklen
++# Windows beim Start hell auf
++PAPIER_HELL, PAPIER_DUNKEL = "#F2E8D5", "#121D22"
++
++
++def dunkel() -> bool:
++    """Windows im dunklen Thema für Apps? (Andere Systeme und Fehler: hell.)"""
++    if sys.platform != "win32":
++        return False
++    try:
++        import winreg
++
++        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
++                            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
++            return winreg.QueryValueEx(k, "AppsUseLightTheme")[0] == 0
++    except OSError:
++        return False
++
++
++def papier() -> str:
++    return PAPIER_DUNKEL if dunkel() else PAPIER_HELL
++
++
++def leer() -> str:
++    return ('<!doctype html><meta charset="utf-8"><title>Taleward</title>'
++            f'<body style="background:{papier()}"></body>')
+ 
+ 
+@@ -120,6 +145,6 @@ def app_fenster(adresse: str, geschlossen=None):
+     if not eigene_seite(adresse):
+         raise ValueError("nur die App auf diesem PC")
+-    w = webview.create_window("Taleward", html=LEER, js_api=KeineBruecke(), width=1180, height=820,
+-                              min_size=(420, 560), background_color="#F2E8D5", text_select=True)
++    w = webview.create_window("Taleward", html=leer(), js_api=KeineBruecke(), width=1180, height=820,
++                              min_size=(420, 560), background_color=papier(), text_select=True)
+     w.events.loaded += lambda: abdichten(w, adresse)
+     if geschlossen:
+diff --git a/taleward_worker/oberflaeche.py b/taleward_worker/oberflaeche.py
+index 3b0ef3b..abc36c4 100644
+--- a/taleward_worker/oberflaeche.py
++++ b/taleward_worker/oberflaeche.py
+@@ -334,6 +334,6 @@ class Api:
+             webbrowser.open(url)
+ 
+-    def verwaltung_oeffnen(self) -> None:
+-        self._app.verwaltung_oeffnen()
++    def verwaltung_oeffnen(self, seite: str = "") -> None:
++        self._app.verwaltung_oeffnen(seite)
+ 
+     def fenster_verstecken(self) -> None:
+@@ -478,8 +478,10 @@ class WorkerApp:
+         self.tray_aktualisieren()
+ 
+-    def _netz_beim_ersten_mal(self) -> None:
++    def _netz_beim_ersten_mal(self, nach_installation: bool = False) -> None:
+         """Nach dem Installieren, vor dem ersten Start: Firewall-Regel anlegen, damit Windows nicht seine eigene,
+-        viel weitere Rückfrage zeigt. Lehnt jemand ab, fragt das Programm nicht wieder von selbst."""
+-        if not netzfreigabe.WINDOWS or self.e.firewall_gefragt:
++        viel weitere Rückfrage („Python“) zeigt. Lehnt jemand ab, fragt das Programm beim normalen Start nicht wieder
++        von selbst. Nach einer (Neu-)Installation des KI-Pakets aber schon, wenn die Regel fehlt – etwa nach dem
++        Deinstallieren und Neuinstallieren, das die Regel entfernt, die Einstellungen aber behält."""
++        if not netzfreigabe.WINDOWS or (self.e.firewall_gefragt and not nach_installation):
+             return
+         self.e.firewall_gefragt = True
+@@ -510,9 +512,12 @@ class WorkerApp:
+         return True
+ 
+-    def verwaltung_oeffnen(self) -> None:
++    VERWALTUNG_SEITEN = {"": "", "transkription#hf": "/transkription#hf"}  # nur feste Ziele aus der Oberfläche
++
++    def verwaltung_oeffnen(self, seite: str = "") -> None:
+         """Nur bei „Alles auf diesem PC“ (dort ist die Spielleitung Verwalter). Beim Verbinden gehört die Verwaltung
+         dem Betreiber des Servers – kein Knopf dafür im Programm."""
+         if self.e.einzelplatz:
+-            webbrowser.open(einzelplatz.ADRESSE + "/verwaltung")  # nur vom PC selbst erreichbar
++            pfad = self.VERWALTUNG_SEITEN.get(seite or "", "")
++            webbrowser.open(einzelplatz.ADRESSE + "/verwaltung" + pfad)  # nur vom PC selbst erreichbar
+ 
+     def programm_in_den_hintergrund(self) -> None:
+@@ -592,5 +597,6 @@ class WorkerApp:
+                 self.e.speichern()
+             if self.e.einzelplatz:
+-                self._netz_beim_ersten_mal()
++                self._netz_beim_ersten_mal(nach_installation=self.installation is not None
++                                           and self.installation.phase != "fehler")
+                 self.taleward_starten()
+             elif self.e.gekoppelt:
+@@ -884,5 +890,5 @@ class WorkerApp:
+         self.fenster = webview.create_window(
+             "Taleward", str(pfade.ressourcen() / "ui" / "index.html"), js_api=Api(self),
+-            width=breite, height=hoehe, min_size=mindestens, background_color="#F2E8D5",
++            width=breite, height=hoehe, min_size=mindestens, background_color=fenster.papier(),
+             hidden=versteckt and self.tray is not None, minimized=versteckt and self.tray is None)
+         self.fenster.events.closing += self._beim_schliessen
+@@ -895,4 +901,9 @@ class WorkerApp:
+         speicher = pfade.fenster_speicher()
+         fenster.zwischenspeicher_leeren(speicher, VERSION)
++        try:  # Programmdatei heißt seit 0.3.9 Taleward.exe: vorhandenen Autostart-Eintrag mitnehmen
++            if autostart.nachfuehren():
++                self.dienst.protokoll.schreiben("Autostart auf das umbenannte Programm umgestellt")
++        except OSError:
++            pass
+         # Eigener freier Anschluss für die Programmoberfläche: pywebview nähme mit dauerhaftem Speicher sonst immer
+         # denselben (42001) – dann lieferte WebView2 nach einem Update alte Seiten aus dem Zwischenspeicher, und ein
+diff --git a/taleward_worker/ui/app.js b/taleward_worker/ui/app.js
+index 18746c0..8306017 100644
+--- a/taleward_worker/ui/app.js
++++ b/taleward_worker/ui/app.js
+@@ -290,6 +290,6 @@
+       text = t("st_modelle_text", { mb: gb(z.modelleMb || 0) });
+     } else if (art === "fehler" && z.code === "modell") {
+-      titel = t("st_modell");
+-      text = t("st_modell_text", { wann: wann(z.neuerVersuch) });
++      titel = t(einzelplatz() ? "st_modell_hier" : "st_modell");
++      text = t(einzelplatz() ? "st_modell_hier_text" : "st_modell_text", { wann: wann(z.neuerVersuch) });
+     } else if (art === "fehler") {
+       text = z.text || t("f_" + (z.code || "einrichtung"));
+@@ -367,5 +367,9 @@
+     if (art === "pausiert") liste.push(["Fortsetzen", "primary", () => api.pausieren(false)]);
+     if (art === "gestoppt") liste.push(["Starten", "primary", () => api.starten()]);
+-    if (art === "fehler" || art === "abgestuerzt") {
++    if (art === "fehler" && S.dienst.zustand.code === "modell" && einzelplatz()) {
++      // Stimmen erkennen einrichten: genau die Stelle in der Verwaltung, mit Anleitung (Quelle der Wahrheit für den Weg)
++      liste.push(["Stimmen erkennen einrichten", "primary", () => api.verwaltung_oeffnen("transkription#hf")]);
++      liste.push(["Protokoll ansehen", "quiet", () => zeigeReiter("protokoll")]);
++    } else if (art === "fehler" || art === "abgestuerzt") {
+       if (["motor_fehlt", "motor_kaputt"].includes(S.dienst.zustand.code || "")) liste.push(["Installieren", "primary", () => { schritt = 2; }]);
+       else liste.push(["Erneut versuchen", "primary", () => api.starten()]);
+diff --git a/taleward_worker/ui/texte.js b/taleward_worker/ui/texte.js
+index 8181653..3e1849e 100644
+--- a/taleward_worker/ui/texte.js
++++ b/taleward_worker/ui/texte.js
+@@ -51,5 +51,5 @@ window.TEXTE = {
+     tw_upd_starten: "Taleward startet mit Fassung {neu} …",
+     tw_upd_pruefen: "Taleward startet mit Fassung {neu} …",
+-    tw_upd_zurueck: "Das hat nicht geklappt. Taleward geht zurück auf Fassung {alt} …",
++    tw_upd_zurueck: "Das hat nicht geklappt. Taleward geht zurück auf Fassung {alt} … Dafür braucht es eine Internetverbindung.",
+     tw_upd_fertig: "Taleward ist jetzt auf Fassung {neu}.",
+     tw_upd_zurueckgenommen: "Das Update auf Fassung {neu} hat nicht geklappt. Taleward läuft weiter mit {alt}, deine Daten sind wie vorher. Du kannst es später noch einmal versuchen.",
+@@ -123,5 +123,6 @@ window.TEXTE = {
+     st_getrennt: "Keine Verbindung", st_getrennt_text: "Der Server ist gerade nicht erreichbar. Neuer Versuch {wann}.",
+     st_fehler: "Braucht deine Hilfe", st_abgelehnt: "Nicht mehr gekoppelt",
+-    st_modell: "Wartet auf das Sprechermodell", st_modell_text: "Der Server hat das Sprechermodell noch nicht. Bei „Alles auf diesem PC“ lädt er es, sobald in der Verwaltung unter „Transkription“ der Zugang hinterlegt ist. Der Worker sieht {wann} wieder nach.",
++    st_modell: "Wartet auf das Sprechermodell", st_modell_text: "Der Server hat das Sprechermodell noch nicht. Sag der Person Bescheid, die den Server verwaltet. Taleward sieht {wann} wieder nach.",
++    st_modell_hier: "Stimmen erkennen ist noch nicht eingerichtet", st_modell_hier_text: "Damit Taleward erkennt, wer spricht, braucht es einmalig einen kostenlosen Zugang. Der Knopf öffnet die Stelle mit der Anleitung. Taleward sieht {wann} wieder nach.",
+     st_abgelehnt_text: "Der Server kennt diesen Worker nicht mehr (in der Verwaltung entfernt oder gesperrt). Bitte neu koppeln.",
+     st_abgestuerzt: "Startet neu", st_abgestuerzt_text: "Der Worker wurde unerwartet beendet und startet {wann} neu.",
+@@ -268,5 +269,5 @@ window.TEXTE = {
+     tw_upd_starten: "Taleward is starting with version {neu} …",
+     tw_upd_pruefen: "Taleward is starting with version {neu} …",
+-    tw_upd_zurueck: "That didn't work. Taleward is going back to version {alt} …",
++    tw_upd_zurueck: "That didn't work. Taleward is going back to version {alt} … This needs an internet connection.",
+     tw_upd_fertig: "Taleward is now on version {neu}.",
+     tw_upd_zurueckgenommen: "The update to version {neu} didn't work. Taleward keeps running with {alt}, your data is as before. You can try again later.",
+@@ -282,5 +283,5 @@ window.TEXTE = {
+     "Erneut prüfen": "Check again", "Im Testmodus einrichten": "Set up in test mode", "Weiter": "Continue",
+     "KI-Paket laden": "Download AI package", "Abbrechen": "Cancel", "Protokoll ansehen": "View log",
+-    "Erneut versuchen": "Try again", "Fertig eingerichtet": "All set", "Worker starten": "Start worker",
++    "Erneut versuchen": "Try again", "Stimmen erkennen einrichten": "Set up voice recognition", "Fertig eingerichtet": "All set", "Worker starten": "Start worker",
+     "Heute verarbeitet": "Processed today", "Insgesamt": "Total", "Server": "Server", "Worker-Name": "Worker name",
+     "Grafikkarte": "Graphics card", "Sprachmodell": "Speech model", "Fassung": "Version", "Sprache": "Language",
+@@ -291,5 +292,5 @@ window.TEXTE = {
+     "Starten": "Start", "Anhalten": "Stop", "Jetzt aktualisieren": "Update now", "Herunterladen": "Download",
+     update_titel: "Install updates automatically",
+-    recaps_titel: "Write recaps on this PC too",
++    recaps_titel: "Write chapters on this PC too",
+     recaps_text: "With a local language model (Ollama), no cloud. About 1.4 GB program and 5 GB language model, once. On the server, “Local model” must be selected under “Summary”.",
+     ollama_laedt: "Downloading Ollama … {p}", ollama_entpackt: "Setting up Ollama …",
+@@ -297,8 +298,8 @@ window.TEXTE = {
+     ollama_fremd: "Uses the Ollama already installed on this PC.", ollama_fehler: "Ollama could not be set up: {text}",
+     ollama_startet: "Ollama is set up and starts with the worker.",
+-    ollama_startfehler: "Ollama is not running: {text}", ollama_zu_schwach: "This needs a graphics card with at least 6 GB or 16 GB of RAM – otherwise a recap takes hours. The server handles recaps instead.",
++    ollama_startfehler: "Ollama is not running: {text}", ollama_zu_schwach: "This needs a graphics card with at least 6 GB or 16 GB of RAM – otherwise a chapter takes hours. The server handles chapters instead.",
+     speicher_ollama: "Ollama with language model {mb}.", ollama_entfernen: "Remove Ollama",
+     bestaetigen_ollama: "Remove Ollama and the language model from this PC?",
+-    "Recaps": "Recaps", recaps_lokal: "here, with {modell}", recaps_server: "done by the server or another worker",
++    "Recaps": "Chapters", recaps_lokal: "here, with {modell}", recaps_server: "done by the server or another worker",
+     update_text: "New versions are installed as soon as nothing is being processed.",
+     app_update_auto: "Will be installed automatically as soon as nothing is being processed.",
+@@ -351,5 +352,6 @@ window.TEXTE = {
+     st_getrennt: "No connection", st_getrennt_text: "The server can't be reached right now. Next try {wann}.",
+     st_fehler: "Needs your attention", st_abgelehnt: "No longer paired",
+-    st_modell: "Waiting for the speaker model", st_modell_text: "The server doesn't have the speaker model yet. With “Everything on this PC” it downloads it once access is set up in the administration under “Transcription”. The worker checks again {wann}.",
++    st_modell: "Waiting for the speaker model", st_modell_text: "The server doesn't have the speaker model yet. Let the person who manages the server know. Taleward checks again {wann}.",
++    st_modell_hier: "Voice recognition isn't set up yet", st_modell_hier_text: "For Taleward to recognise who is speaking, it needs free access once. The button opens the place with the instructions. Taleward checks again {wann}.",
+     st_abgelehnt_text: "The server no longer knows this worker (removed or blocked in the admin). Please pair again.",
+     st_abgestuerzt: "Restarting", st_abgestuerzt_text: "The worker stopped unexpectedly and restarts {wann}.",
+diff --git a/tests/test_worker_039.py b/tests/test_worker_039.py
+new file mode 100644
+index 0000000..7d67c1e
+--- /dev/null
++++ b/tests/test_worker_039.py
+@@ -0,0 +1,100 @@
++"""Worker 0.3.9: Programmdatei Taleward.exe, Stimmen erkennen einrichten, Fenster im dunklen Thema, Firewall-Regel nach
++dem Neuinstallieren."""
++import re
++import sys
++import types
++from pathlib import Path
++
++from tests.test_worker_038 import _app
++
++WURZEL = Path(__file__).resolve().parent.parent
++
++
++def test_installer_legt_taleward_exe_an_und_kennt_den_alten_namen():
++    iss = (WURZEL / "packaging/windows/taleward-worker.iss").read_text(encoding="utf-8")
++    assert 'DestName: "Taleward.exe"' in iss and 'Excludes: "TalewardWorker.exe"' in iss
++    assert 'Type: files; Name: "{app}\\TalewardWorker.exe"' in iss  # alte Datei beim Update weg
++    for zeile in re.findall(r'^(?:Name|Filename|  ValueData|UninstallDisplayIcon).*$', iss, re.M):
++        assert "TalewardWorker.exe" not in zeile, zeile  # Verknüpfungen, Start, Autostart: neuer Name
++    assert "LaeuftAls('Taleward.exe') or LaeuftAls('TalewardWorker.exe')" in iss
++    assert "taskkill /IM Taleward.exe" in iss and "taskkill /IM TalewardWorker.exe" in iss
++    assert "OutputBaseFilename=TalewardWorker-Setup" in iss  # Name des Installers bleibt (Selbst-Update alter Fassungen)
++
++
++def test_autostart_zieht_auf_das_umbenannte_programm_um(monkeypatch):
++    from taleward_worker import autostart
++
++    reg = {}
++
++    class Schluessel:
++        def __enter__(self):
++            return self
++
++        def __exit__(self, *a):
++            return False
++
++    def query(_k, name):
++        if name not in reg:
++            raise OSError
++        return reg[name], 1
++
++    winreg = types.SimpleNamespace(HKEY_CURRENT_USER=0, KEY_SET_VALUE=2, REG_SZ=1,
++                                   OpenKey=lambda *a: Schluessel(), QueryValueEx=query,
++                                   SetValueEx=lambda _k, name, _r, _t, wert: reg.__setitem__(name, wert),
++                                   DeleteValue=lambda _k, name: reg.pop(name))
++    monkeypatch.setitem(sys.modules, "winreg", winreg)
++    monkeypatch.setattr(autostart.sys, "platform", "win32")
++    monkeypatch.setattr(autostart.sys, "frozen", True, raising=False)
++    monkeypatch.setattr(autostart.sys, "executable", r"C:\Users\a\AppData\Local\Programs\Taleward Worker\Taleward.exe")
++    assert not autostart.nachfuehren()  # kein Eintrag: bleibt aus
++    assert reg == {}
++    reg[autostart.NAME] = r'"C:\Users\a\AppData\Local\Programs\Taleward Worker\TalewardWorker.exe" --hintergrund'
++    assert autostart.nachfuehren()
++    assert reg[autostart.NAME].endswith('Taleward.exe" --hintergrund') and "TalewardWorker" not in reg[autostart.NAME]
++    assert not autostart.nachfuehren()  # passt schon
++
++
++def test_fenster_im_dunklen_thema_ohne_hellen_blitz(monkeypatch):
++    from taleward_worker import fenster
++
++    monkeypatch.setattr(fenster, "dunkel", lambda: True)
++    assert fenster.papier() == "#121D22" and "#121D22" in fenster.leer()
++    monkeypatch.setattr(fenster, "dunkel", lambda: False)
++    assert fenster.papier() == "#F2E8D5" and "#F2E8D5" in fenster.leer()
++
++
++def test_stimmen_erkennen_einrichten_oeffnet_die_richtige_stelle(monkeypatch):
++    from taleward_worker import oberflaeche
++
++    geoeffnet = []
++    monkeypatch.setattr(oberflaeche.webbrowser, "open", lambda url, *a, **k: geoeffnet.append(url))
++    app, api = _app(monkeypatch, betrieb="einzelplatz")
++    api.verwaltung_oeffnen("transkription#hf")
++    api.verwaltung_oeffnen("../../irgendwohin")  # nur feste Ziele
++    api.verwaltung_oeffnen()
++    assert geoeffnet == ["http://127.0.0.1:8000/verwaltung/transkription#hf", "http://127.0.0.1:8000/verwaltung",
++                         "http://127.0.0.1:8000/verwaltung"]
++
++
++def test_firewall_regel_nach_neuinstallation_wieder_angeboten(monkeypatch):
++    from taleward_worker import netzfreigabe
++
++    app, _ = _app(monkeypatch, betrieb="einzelplatz", firewall_gefragt=True)
++    angelegt = []
++    monkeypatch.setattr(netzfreigabe, "WINDOWS", True)
++    monkeypatch.setattr(netzfreigabe, "stand", lambda: {"regel": False})
++    monkeypatch.setattr(netzfreigabe, "anlegen", lambda: angelegt.append(1) or True)
++    monkeypatch.setattr(app, "netz_pruefen", lambda: None)
++    monkeypatch.setattr(app.e, "speichern", lambda: None)
++    app._netz_beim_ersten_mal()
++    assert angelegt == []  # beim normalen Start nicht wieder fragen
++    app._netz_beim_ersten_mal(nach_installation=True)
++    assert angelegt == [1]
++
++
++def test_texte_deutsch_englisch():
++    texte = (WURZEL / "taleward_worker/ui/texte.js").read_text(encoding="utf-8")
++    assert texte.count("st_modell_hier:") == 2 and texte.count("st_modell_hier_text:") == 2
++    en = texte[texte.index("en: {") if "en: {" in texte else len(texte) // 2:]
++    assert "recaps on this PC" not in en and "a recap takes hours" not in en and '"Recaps": "Recaps"' not in en
++    assert "Sprechermodell" not in re.search(r'st_modell_hier_text: "([^"]*)"', texte).group(1)
+diff --git a/uv.lock b/uv.lock
+index 329ebdc..b7e1399 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -677,5 +677,5 @@ wheels = [
+ [[package]]
+ name = "taleward-worker"
+-version = "0.3.8"
++version = "0.3.9"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
