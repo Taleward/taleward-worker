@@ -1,0 +1,249 @@
+From a425dfa8f4a9b29d86fb7c81811ccb5157b58a5c Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 15:58:35 +0200
+Subject: [PATCH 63/71] Taleward Desktop 5: Tests angepasst
+
+---
+ tests/test_betriebsart.py     | 10 ++++----
+ tests/test_einzelplatz.py     |  2 +-
+ tests/test_mitnehmen.py       | 10 ++++----
+ tests/test_programmfenster.py | 34 +++++++++++++-------------
+ tests/test_worker_038.py      | 45 ++++++++++++++++++-----------------
+ tests/test_worker_039.py      | 12 +++-------
+ 6 files changed, 53 insertions(+), 60 deletions(-)
+
+diff --git a/tests/test_betriebsart.py b/tests/test_betriebsart.py
+index 98abef8..57d5f9a 100644
+--- a/tests/test_betriebsart.py
++++ b/tests/test_betriebsart.py
+@@ -34,6 +34,6 @@ def test_wechsel_von_server_zu_alles_auf_diesem_pc(monkeypatch):
+     monkeypatch.setattr(app, "taleward_starten", lambda: gestartet.append(1))
+     monkeypatch.setattr(motor, "installiert", lambda: {"fassung": "0.4.93"})  # für den Verein, zu alt
+-    assert api.betrieb_wechseln("verbunden") == {"ok": False, "fehler": "unbekannt"}  # ist schon so
+-    assert api.betrieb_wechseln("einzelplatz") == {"ok": True}
++    assert api.betrieb_wechseln(api._pruefwert, "verbunden") == {"ok": False, "fehler": "unbekannt"}  # ist schon so
++    assert api.betrieb_wechseln(api._pruefwert, "einzelplatz") == {"ok": True}
+     assert _warten(lambda: app.e.einzelplatz)
+     assert _warten(lambda: installiert == [False])
+@@ -65,8 +65,8 @@ def test_kein_wechsel_mitten_in_der_arbeit(monkeypatch):
+     app, api = _app(monkeypatch, betrieb="verbunden", server="https://verein.invalid", token="wk.1.x")
+     app.dienst.zustand = {"art": "arbeitet"}
+-    assert api.betrieb_wechseln("einzelplatz") == {"ok": False, "fehler": "arbeitet"}
++    assert api.betrieb_wechseln(api._pruefwert, "einzelplatz") == {"ok": False, "fehler": "arbeitet"}
+     app.dienst.zustand = {"art": "warte"}
+     app.installation = SimpleNamespace(phase="pakete")
+-    assert api.betrieb_wechseln("einzelplatz") == {"ok": False, "fehler": "beschaeftigt"}
++    assert api.betrieb_wechseln(api._pruefwert, "einzelplatz") == {"ok": False, "fehler": "beschaeftigt"}
+     assert app.e.art == "verbunden"
+ 
+@@ -75,5 +75,5 @@ def test_neu_koppeln_bleibt_beim_server(monkeypatch):
+     app, api = _app(monkeypatch, betrieb="verbunden", server="https://verein.invalid", token="wk.1.x")
+     monkeypatch.setattr(app.dienst, "stoppen", lambda *a, **k: None)
+-    api.entkoppeln()
++    api.entkoppeln(api._pruefwert)
+     assert app.e.art == "verbunden" and not app.e.gekoppelt and app.e.server == "https://verein.invalid"
+ 
+diff --git a/tests/test_einzelplatz.py b/tests/test_einzelplatz.py
+index 0f1fa47..61d56f9 100644
+--- a/tests/test_einzelplatz.py
++++ b/tests/test_einzelplatz.py
+@@ -258,5 +258,5 @@ def test_oberflaeche_wahl_und_konto(monkeypatch):
+     assert (app.e.server, app.e.token, gestartet) == (einzelplatz.ADRESSE, "wk.abc.def", [1])
+     # Neu koppeln gibt es im Einzelplatz nicht
+-    api.entkoppeln()
++    api.entkoppeln(api._pruefwert)
+     assert app.e.token == "wk.abc.def"
+     assert api.betrieb_waehlen("verbunden") == {"ok": False}
+diff --git a/tests/test_mitnehmen.py b/tests/test_mitnehmen.py
+index 76a7185..b09db09 100644
+--- a/tests/test_mitnehmen.py
++++ b/tests/test_mitnehmen.py
+@@ -50,5 +50,5 @@ def test_sicherung_zurueckspielen(monkeypatch, tmp_path):
+     datei.write_bytes(b"TWSICH01")
+     monkeypatch.setattr(app, "datei_waehlen", lambda **k: datei)
+-    assert api.sicherung_zurueckspielen("Lindwurm-Kessel-7")["fehler"] == "keine_datei"
++    assert api.sicherung_zurueckspielen(api._pruefwert, "Lindwurm-Kessel-7")["fehler"] == "keine_datei"
+     assert api.sicherung_waehlen() == {"ok": True, "datei": "alt.taleward"}
+     ablauf = []
+@@ -58,5 +58,5 @@ def test_sicherung_zurueckspielen(monkeypatch, tmp_path):
+     cli = _Cli(2)
+     monkeypatch.setattr(app.ep_update, "cli", cli)
+-    assert api.sicherung_zurueckspielen("falsch-123") == {"ok": True}
++    assert api.sicherung_zurueckspielen(api._pruefwert, "falsch-123") == {"ok": True}
+     assert _warten(lambda: app.sicherung.phase == "fehler")
+     assert app.sicherung.fehler == "passwort" and ablauf == ["worker aus", "taleward aus", "taleward an"]
+@@ -65,5 +65,5 @@ def test_sicherung_zurueckspielen(monkeypatch, tmp_path):
+     cli.code = 0
+     ablauf.clear()
+-    assert api.sicherung_zurueckspielen("Lindwurm-Kessel-7") == {"ok": True}
++    assert api.sicherung_zurueckspielen(api._pruefwert, "Lindwurm-Kessel-7") == {"ok": True}
+     assert _warten(lambda: app.sicherung.phase == "fertig")
+     assert ablauf[-1] == "taleward an" and app.e.konto_angelegt  # neuer PC: das Konto kam mit der Sicherung
+@@ -75,6 +75,6 @@ def test_sicherung_nicht_waehrend_eines_updates(monkeypatch):
+     app.ep_update.phase = "tauschen"
+     app.sicherung.gewaehlt = Path(__file__)
+-    assert api.sicherung_zurueckspielen("Lindwurm-Kessel-7")["fehler"] == "beschaeftigt"
+-    assert api.betrieb_wechseln("verbunden")["fehler"] == "beschaeftigt"
++    assert api.sicherung_zurueckspielen(api._pruefwert, "Lindwurm-Kessel-7")["fehler"] == "beschaeftigt"
++    assert api.betrieb_wechseln(api._pruefwert, "verbunden")["fehler"] == "beschaeftigt"
+ 
+ 
+diff --git a/tests/test_programmfenster.py b/tests/test_programmfenster.py
+index 0796ccb..2d7c948 100644
+--- a/tests/test_programmfenster.py
++++ b/tests/test_programmfenster.py
+@@ -13,11 +13,4 @@ def test_eigene_seite():
+ 
+ 
+-def test_keine_bruecke():
+-    from taleward_worker.fenster import KeineBruecke
+-
+-    k = KeineBruecke()
+-    assert getattr(k, "__class__", None) is None and getattr(k, "beenden", None) is None and dir(k) == []
+-
+-
+ # ---------------------------------------------------------------- Netzwerk-Freigabe (Windows)
+ def test_firewall_regel_nur_wie_vorgesehen():
+@@ -176,5 +169,8 @@ class _Fenster:
+ 
+ 
+-def test_app_fenster_laedt_erst_eine_leere_seite(monkeypatch):
++HERKUNFT = "http://localhost:51234"
++
++
++def test_hauptfenster_laedt_erst_eine_leere_seite(monkeypatch):
+     import webview
+ 
+@@ -185,16 +181,17 @@ def test_app_fenster_laedt_erst_eine_leere_seite(monkeypatch):
+         _Fenster(url=url, **k)) or erzeugt[-1])
+     monkeypatch.setattr(fenster.sys, "platform", "linux")
+-    w = fenster.app_fenster("http://localhost:8000/app/")
+-    assert w.k["url"] is None and "<body" in w.k["html"]  # nicht gleich die App
++    w = fenster.hauptfenster("Taleward", HERKUNFT + "/desktop.html", HERKUNFT, object(), width=900, height=600)
++    assert w.k["url"] is None and "<body" in w.k["html"]  # nicht gleich die Oberfläche
+     for h in w.events.loaded.handler:
+         h()
+-    assert w.geladen == ["http://localhost:8000/app/"]
++    assert w.geladen == [HERKUNFT + "/desktop.html"]
+     for h in w.events.loaded.handler:  # weitere Ladevorgänge ändern nichts
+         h()
+-    assert w.geladen == ["http://localhost:8000/app/"]
++    assert w.geladen == [HERKUNFT + "/desktop.html"]
+     import pytest
+ 
+-    with pytest.raises(ValueError):
+-        fenster.app_fenster("https://boese.example/")
++    for boese in ("http://localhost:8000/app/", "https://boese.example/", "http://127.0.0.1:51234/desktop.html"):
++        with pytest.raises(ValueError):
++            fenster.hauptfenster("Taleward", boese, HERKUNFT, object())
+ 
+ 
+@@ -239,11 +236,12 @@ def test_unter_windows_regeln_vor_der_app_und_keine_fremden_schemata(monkeypatch
+     monkeypatch.setattr(fenster.sys, "platform", "win32")
+     w = types.SimpleNamespace(native=form)
+-    fenster.abdichten(w, "http://localhost:8000/app/")
++    fenster.abdichten(w, HERKUNFT, HERKUNFT + "/desktop.html")
+     assert w._taleward_dicht and core.Settings.AreDevToolsEnabled is False
+-    assert core.aufrufe == [("navigate", "http://localhost:8000/app/", 1)]  # App erst nach den Regeln
++    assert core.Settings.AreDefaultContextMenusEnabled is False
++    assert core.aufrufe == [("navigate", HERKUNFT + "/desktop.html", 1)]  # Oberfläche erst nach den Regeln
+     args = types.SimpleNamespace(Uri="ms-settings:privacy", Cancel=False)
+     core.LaunchingExternalUriScheme.handler[0](None, args)
+     assert args.Cancel is True
+-    fenster.abdichten(w, "http://localhost:8000/app/")  # zweites Laden: nichts mehr
++    fenster.abdichten(w, HERKUNFT, HERKUNFT + "/desktop.html")  # zweites Laden: nichts mehr
+     assert len(core.aufrufe) == 1
+ 
+@@ -257,5 +255,5 @@ def test_aeltere_webview2_ohne_schema_ereignis(monkeypatch):
+     monkeypatch.setattr(fenster.sys, "platform", "win32")
+     w = types.SimpleNamespace(native=form, destroy=lambda: (_ for _ in ()).throw(AssertionError("geschlossen")))
+-    fenster.abdichten(w, "http://localhost:8000/app/")
++    fenster.abdichten(w, HERKUNFT, HERKUNFT + "/desktop.html")
+     assert w._taleward_dicht and core.aufrufe
+ 
+diff --git a/tests/test_worker_038.py b/tests/test_worker_038.py
+index fda7418..4edc4bd 100644
+--- a/tests/test_worker_038.py
++++ b/tests/test_worker_038.py
+@@ -56,5 +56,5 @@ def test_entwickleransicht_nur_mit_taleward_debug(monkeypatch):
+             monkeypatch.delenv("TALEWARD_DEBUG", raising=False)
+         w = types.SimpleNamespace(native=form)
+-        fenster.abdichten(w, "http://localhost:8000/app/")
++        fenster.abdichten(w, "http://localhost:51234", "http://localhost:51234/desktop.html")
+         assert core.Settings.AreDevToolsEnabled is erwartet
+ 
+@@ -98,27 +98,28 @@ def _app(monkeypatch, **einstellungen):
+ 
+ def test_verwaltung_nur_bei_alles_auf_diesem_pc(monkeypatch):
+-    from taleward_worker import oberflaeche
+-
+-    geoeffnet = []
+-    monkeypatch.setattr(oberflaeche.webbrowser, "open", lambda url, *a, **k: geoeffnet.append(url))
+     app, api = _app(monkeypatch, betrieb="verbunden", server="https://taleward.example", token="wk.1.x")
+-    api.verwaltung_oeffnen()
+-    assert geoeffnet == []
++    gezeigt = []
++    monkeypatch.setattr(app, "bereich_zeigen", lambda b: gezeigt.append(b))
++    app.verwaltung_oeffnen()
++    assert gezeigt == [] and api.verwaltung_adresse() == {"ok": False}
+     app.e.betrieb = "einzelplatz"
+-    api.verwaltung_oeffnen()
+-    assert geoeffnet == ["http://127.0.0.1:8000/verwaltung"]
+-
+-
+-def test_taleward_oeffnen_schickt_das_programm_in_den_infobereich(monkeypatch):
+-    app, api = _app(monkeypatch, betrieb="einzelplatz", konto_angelegt=True)
+-    versteckt = []
+-    monkeypatch.setattr(app, "app_fenster_oeffnen", lambda: True)
+-    monkeypatch.setattr(app, "verstecken", lambda: versteckt.append(1))
+-    app.fenster, app.tray = object(), None
+-    assert api.taleward_oeffnen() == {"ok": True} and versteckt == []  # ohne Infobereich bleibt das Fenster
+-    app.tray = object()
+-    assert api.taleward_oeffnen() == {"ok": True} and versteckt == [1]
+-    monkeypatch.setattr(app, "app_fenster_oeffnen", lambda: False)  # App noch nicht bereit: Programm bleibt
+-    assert api.taleward_oeffnen() == {"ok": False} and versteckt == [1]
++    app.verwaltung_oeffnen()
++    assert gezeigt == ["verwaltung"]  # im Fenster, nicht im Browser
++    assert api.verwaltung_adresse() == {"ok": True, "adresse": "http://localhost:8000/verwaltung/"}
++    assert api.verwaltung_adresse("transkription#hf")["adresse"] == "http://localhost:8000/verwaltung/transkription#hf"
++    assert api.verwaltung_adresse("https://boese.example/") == {"ok": False}
++
++
++def test_taleward_oeffnen_wechselt_zu_taleward_desktop(monkeypatch):
++    from taleward_worker import motor
++
++    app, api = _app(monkeypatch, betrieb="einzelplatz", konto_angelegt=False)
++    monkeypatch.setattr(motor, "installiert", lambda: {"fassung": "0.4.112"})
++    angewendet = []
++    monkeypatch.setattr(app, "ansicht_anwenden", lambda: angewendet.append(app.ansicht_soll()))
++    monkeypatch.setattr(app, "bereich_zeigen", lambda b: angewendet.append(b))
++    assert api.taleward_oeffnen() == {"ok": False} and angewendet == []  # noch kein Konto: kleines Fenster bleibt
++    app.e.konto_angelegt = True
++    assert api.taleward_oeffnen() == {"ok": True} and angewendet == ["desktop", "kampagnen"]
+ 
+ 
+diff --git a/tests/test_worker_039.py b/tests/test_worker_039.py
+index 7d67c1e..e92c7d5 100644
+--- a/tests/test_worker_039.py
++++ b/tests/test_worker_039.py
+@@ -65,14 +65,8 @@ def test_fenster_im_dunklen_thema_ohne_hellen_blitz(monkeypatch):
+ 
+ def test_stimmen_erkennen_einrichten_oeffnet_die_richtige_stelle(monkeypatch):
+-    from taleward_worker import oberflaeche
+-
+-    geoeffnet = []
+-    monkeypatch.setattr(oberflaeche.webbrowser, "open", lambda url, *a, **k: geoeffnet.append(url))
+     app, api = _app(monkeypatch, betrieb="einzelplatz")
+-    api.verwaltung_oeffnen("transkription#hf")
+-    api.verwaltung_oeffnen("../../irgendwohin")  # nur feste Ziele
+-    api.verwaltung_oeffnen()
+-    assert geoeffnet == ["http://127.0.0.1:8000/verwaltung/transkription#hf", "http://127.0.0.1:8000/verwaltung",
+-                         "http://127.0.0.1:8000/verwaltung"]
++    assert api.verwaltung_adresse("transkription#hf")["adresse"] == "http://localhost:8000/verwaltung/transkription#hf"
++    assert api.verwaltung_adresse("../../irgendwohin") == {"ok": False}  # nur feste Ziele
++    assert api.verwaltung_adresse()["adresse"] == "http://localhost:8000/verwaltung/"
+ 
+ 
+-- 
+2.43.0
