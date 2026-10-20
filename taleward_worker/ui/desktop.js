@@ -127,13 +127,39 @@
     // Rahmen darf nie durch Neuladen abbrechen)
     if (!titel && !f.getAttribute("src")) f.src = APP + appZiel;
   }
+  // Verwaltung im Rahmen erst, wenn der Server läuft und neu genug ist (ab 0.4.112 darf die Oberfläche sie einbetten) –
+  // sonst zeigt WebView2 nur „Verbindung verweigert“. Bis dahin ein Hinweis mit Update und dem Weg über den Browser.
+  function verwaltungHinweis() {
+    const tw = S.taleward || {}, z = (tw.zustand || {}).art;
+    let titel = "", text = "", update = false, browser = false;
+    if (S.serverVersion && !fassungMindestens(S.serverVersion, MINDEST_SERVER)) {
+      titel = t("d_app_alt"); text = t("d_verwaltung_alt_text"); update = true; browser = true;
+    } else if (z === "fehler") {
+      titel = t("d_app_fehler"); text = t("d_app_fehler_text");
+    } else if (!S.serverVersion) {
+      titel = t("d_app_startet"); text = t("d_verwaltung_startet_text");
+    }
+    const h = $("#verwaltung-hinweis");
+    h.hidden = !titel;
+    $("#rahmen-verwaltung").hidden = !!titel;
+    if (titel) {
+      $("#verwaltung-hinweis-titel").textContent = titel; $("#verwaltung-hinweis-text").textContent = text;
+      $("#verwaltung-hinweis-update").hidden = !update; $("#verwaltung-hinweis-browser").hidden = !browser;
+    }
+    return !titel;
+  }
   async function verwaltungLaden() {
     const f = $("#rahmen-verwaltung");
+    // die gewünschte Seite bleibt gemerkt, bis der Server bereit ist
+    if (!verwaltungHinweis() || verwaltungLaden.laeuft) return;
     const seite = verwaltungLaden.seite || "";
     verwaltungLaden.seite = "";
     if (f.getAttribute("src") && !seite) return;
-    const r = await api.verwaltung_adresse(seite);
-    if (r && r.ok) f.src = r.adresse;
+    verwaltungLaden.laeuft = true;
+    try {
+      const r = await api.verwaltung_adresse(seite);
+      if (r && r.ok) f.src = r.adresse;
+    } finally { verwaltungLaden.laeuft = false; }
   }
 
   // ------------------------------------------------------------ Zustand (Leiste und Übersicht)
@@ -573,6 +599,7 @@
     if (!S) return;
     leisteZeigen();
     if (RAHMEN_APP.includes(bereich)) appZeigen();
+    if (bereich === "verwaltung" && !$("#rahmen-verwaltung").getAttribute("src")) verwaltungLaden();
     if (bereich === "uebersicht") uebersichtZeigen();
     if (bereich === "verarbeitung") verarbeitungZeigen();
     if (bereich === "sicherung") sicherungZeigen();
@@ -600,9 +627,12 @@
     $("#leiste-klappe").onclick = async () => { await api.einstellung("leiste_schmal", !S.einstellungen.leiste_schmal); neuLaden(); };
     $("#app-hinweis-update").onclick = async () => {
       const r = await riskant("taleward_aktualisieren");
-      if (!r || !r.ok) toast(t(r && r.grund === "aktuell" ? "tw_upd_aktuell" : "tw_upd_spaeter"));
+      // „aktuell“, obwohl die Fassung zu alt ist: die nötige Fassung ist noch nicht freigegeben
+      if (!r || !r.ok) toast(t(r && r.grund === "aktuell" ? "d_upd_noch_nicht" : "tw_upd_spaeter"));
     };
     $("#app-hinweis-browser").onclick = () => api.im_browser_oeffnen();
+    $("#verwaltung-hinweis-update").onclick = $("#app-hinweis-update").onclick;
+    $("#verwaltung-hinweis-browser").onclick = () => api.verwaltung_im_browser();
     $("#verwaltung-zurueck").onclick = () => bereichZeigen("einstellungen");
     $("#vb-pause").onclick = async () => { await api.pausieren(!S.einstellungen.pausiert); neuLaden(); };
     $("#vb-prozessor").addEventListener("change", async (e) => { await api.einstellung("geraet", e.target.checked ? "cpu" : "auto"); neuLaden(); });

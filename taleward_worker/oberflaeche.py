@@ -141,6 +141,11 @@ class Api:
         if self._app.server.app_bereit.is_set():
             webbrowser.open(einzelplatz.APP_ADRESSE)
 
+    def verwaltung_im_browser(self) -> None:
+        """Ausweichlösung, solange die Verwaltung nicht im Fenster geht: feste Adresse dieses PCs im Browser."""
+        if self._app.e.einzelplatz:
+            webbrowser.open(huelle.APP_HERKUNFT + "/verwaltung/")
+
     def netz_freigeben(self, wert: str) -> dict:
         """Firewall-Regel anlegen (Windows fragt nach Administratorrechten)."""
         if not self._gilt(wert):

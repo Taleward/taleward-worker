@@ -31,6 +31,9 @@ window.DTEXTE = {
     // App im Rahmen
     d_app_startet: "Taleward startet", d_app_startet_text: "Gleich geht es los. Beim ersten Start lädt Taleward die App, das dauert ein paar Minuten.",
     d_app_fehlt_text: "Die App ließ sich noch nicht laden. Prüf die Internetverbindung, Taleward versucht es weiter.",
+    d_verwaltung_alt_text: "Die Verwaltung im Fenster braucht Taleward ab Fassung 0.4.112. Das Update dauert ein paar Minuten, deine Kampagnen bleiben, wie sie sind. Bis dahin geht sie im Browser.",
+    d_verwaltung_startet_text: "Die Verwaltung erscheint hier, sobald Taleward läuft.",
+    d_upd_noch_nicht: "Die nötige Fassung ist noch nicht verfügbar. Taleward sieht täglich nach und aktualisiert sich dann selbst. Bis dahin geht es im Browser.",
     d_app_alt: "Dafür braucht es eine neuere Fassung", d_app_alt_text: "Diese Ansicht braucht Taleward ab Fassung 0.4.112. Das Update dauert ein paar Minuten, deine Kampagnen bleiben, wie sie sind. Bis dahin geht es im Browser.",
     d_app_fehler: "Taleward braucht deine Hilfe", d_app_fehler_text: "Taleward läuft gerade nicht. In der Übersicht steht, was zu tun ist.",
     // Übersicht
@@ -155,6 +158,9 @@ window.DTEXTE = {
     d_pausieren: "Pause", d_fortsetzen: "Resume", d_oeffnen: "Open",
     d_app_startet: "Taleward is starting", d_app_startet_text: "Almost there. On the first start Taleward downloads the app, which takes a few minutes.",
     d_app_fehlt_text: "The app could not be loaded yet. Check the internet connection, Taleward keeps trying.",
+    d_verwaltung_alt_text: "The administration in this window needs Taleward 0.4.112 or later. The update takes a few minutes and your campaigns stay as they are. Until then, use the browser.",
+    d_verwaltung_startet_text: "The administration appears here as soon as Taleward is running.",
+    d_upd_noch_nicht: "The required version is not available yet. Taleward checks daily and then updates itself. Until then, use the browser.",
     d_app_alt: "This needs a newer version", d_app_alt_text: "This view needs Taleward 0.4.112 or later. The update takes a few minutes and your campaigns stay as they are. Until then, use the browser.",
     d_app_fehler: "Taleward needs your attention", d_app_fehler_text: "Taleward is not running right now. The overview says what to do.",
     d_handys: "Phones on your Wi-Fi",

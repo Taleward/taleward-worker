@@ -676,7 +676,7 @@ wheels = [
 
 [[package]]
 name = "taleward-worker"
-version = "0.3.15"
+version = "0.3.16"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
