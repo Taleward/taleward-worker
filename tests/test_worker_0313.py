@@ -377,6 +377,7 @@ def test_rahmen_ohne_weg_nach_oben():
     assert "microphone" not in verwaltung
     js = _html("desktop.js")
     assert 'const APP = "http://localhost:8000/app/"' in js
+    assert 'const DISCORD = "https://discord.gg/TtJR9FcMbX"' in js and "disabled" not in html.split('id="hi-discord"')[1][:40]
 
 
 @pytest.mark.parametrize("name", ["desktop.html", "index.html"])

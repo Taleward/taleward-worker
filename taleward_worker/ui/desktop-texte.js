@@ -104,7 +104,7 @@ window.DTEXTE = {
     d_s4_antwort: "In der Übersicht auf „Neu starten“ gehen. Hilft das nicht, erstelle unten eine Hilfe-Datei und schick sie, wem du sie geben willst. Als letzter Schritt: Einstellungen → Erweitert → Programmteile neu installieren.",
     d_weiter_hilfe: "Weitere Hilfe",
     d_hilfe_datei_text: "Die Hilfe-Datei enthält Fassungen, Einstellungen und was zuletzt passiert ist, ohne Passwörter und Schlüssel. Du siehst vorher genau, was drinsteht.",
-    d_website: "Website mit Anleitung", d_discord: "Discord (Link folgt)",
+    d_website: "Website mit Anleitung", d_discord: "Discord",
     d_was_zuletzt: "Was zuletzt passiert ist",
     hilfe_text: "Für die Fehlersuche: Fassungen, System, Einstellungen und was zuletzt passiert ist. Schlüssel, Passwörter, Codes, E-Mail-Adressen und dein Windows-Name sind entfernt. Genau das hier wird gespeichert. Schick die Datei nur, wem du sie geben willst.",
     // Ersetzt Wörter aus texte.js
@@ -214,7 +214,7 @@ window.DTEXTE = {
     d_s4_antwort: "Go to the overview and choose “Restart”. If that does not help, create a help file below and send it to whoever you want to give it to. As a last step: Settings → Advanced → Reinstall program components.",
     d_weiter_hilfe: "More help",
     d_hilfe_datei_text: "The help file contains versions, settings and what happened recently, without passwords and keys. You see exactly what is in it beforehand.",
-    d_website: "Website with guide", d_discord: "Discord (link to follow)",
+    d_website: "Website with guide", d_discord: "Discord",
     d_was_zuletzt: "What happened recently",
     hilfe_text: "For troubleshooting: versions, system, settings and what happened recently. Keys, passwords, codes, email addresses and your Windows name are removed. Exactly this is saved. Only send the file to people you want to have it.",
     tw_f_motor_fehlt: "The program components are missing. Reinstall them under Settings → Advanced.",

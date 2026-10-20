@@ -7,6 +7,7 @@
   const APP = "http://localhost:8000/app/";
   const MINDEST_SERVER = [0, 4, 112];
   const WEBSITE = "https://taleward.org/";
+  const DISCORD = "https://discord.gg/TtJR9FcMbX";
   const ERINNERN_NACH_S = 14 * 24 * 3600;
   let api = null, S = null, V = null, sprache = "de", bereich = "kampagnen", appZiel = "#/", letzterLog = "";
   let adresse = null;
@@ -630,6 +631,7 @@
       dialogOeffnen("hilfe", t("Hilfe-Datei"), t("Speichern …"));
     };
     $("#hi-website").onclick = () => api.link_oeffnen(WEBSITE);
+    $("#hi-discord").onclick = () => api.link_oeffnen(DISCORD);
     $("#hi-protokoll").addEventListener("toggle", () => logLaden(true));
     $("#hi-kopieren").onclick = () => {
       const text = $("#hi-log").textContent;
