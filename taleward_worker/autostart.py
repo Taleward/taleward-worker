@@ -51,15 +51,36 @@ def eintrag() -> str | None:
         return None
 
 
+ALTER_NAME = "talewardworker.exe"  # Programmdatei bis Worker 0.3.9
+
+
+def programm_im_eintrag(text: str) -> str:
+    """Programmpfad aus einem Run-Eintrag („"C:\\…\\X.exe" --hintergrund“ oder ohne Anführungszeichen)."""
+    text = text.strip()
+    if text.startswith('"'):
+        return text[1:].split('"', 1)[0]
+    return text.split(" ", 1)[0]
+
+
+def alter_eintrag_hier(alt: str, programm: str) -> bool:
+    """Zeigt der Eintrag auf die alte Programmdatei (TalewardWorker.exe) im selben Ordner wie das laufende Programm?
+    Nur dann ist es dieselbe Installation – eine zweite Kopie (etwa aus „Downloads“) übernimmt den Eintrag nicht."""
+    pfad = programm_im_eintrag(alt).replace("/", "\\")
+    ordner, _, name = pfad.rpartition("\\")
+    hier = programm.replace("/", "\\").rpartition("\\")[0]
+    return name.lower() == ALTER_NAME and bool(ordner) and ordner.lower() == hier.lower()
+
+
 def nachfuehren() -> bool:
-    """Zeigt ein vorhandener Eintrag auf ein anderes Programm (z. B. TalewardWorker.exe vor der Umbenennung in
-    Taleward.exe), auf das laufende umschreiben. Ohne Eintrag bleibt es aus. True, wenn umgeschrieben."""
+    """Zeigt ein vorhandener Eintrag auf TalewardWorker.exe (vor der Umbenennung in Taleward.exe) im selben Ordner,
+    auf das laufende Programm umschreiben. Ohne Eintrag bleibt es aus, andere Einträge bleiben, wie sie sind.
+    True, wenn umgeschrieben."""
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
         return False
     import subprocess
 
     alt = eintrag()
-    if alt is None or alt == subprocess.list2cmdline(befehl()):
+    if alt is None or alt == subprocess.list2cmdline(befehl()) or not alter_eintrag_hier(alt, sys.executable):
         return False
     setzen(True)
     return True

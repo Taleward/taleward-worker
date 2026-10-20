@@ -68,7 +68,8 @@ class Statistik:
         except (OSError, ValueError):
             self.d = {}
 
-    def erledigt(self, sekunden: float, audio_sekunden: float | None = None, peak_mb: int | None = None) -> None:
+    def erledigt(self, sekunden: float, audio_sekunden: float | None = None, peak_mb: int | None = None,
+                 messwerte: dict | None = None) -> None:
         heute = date.today().isoformat()
         if self.d.get("tag") != heute:
             self.d.update({"tag": heute, "heute": 0})
@@ -80,6 +81,9 @@ class Statistik:
             # Zuletzt gemessen: ersetzt die grobe Schätzung in der Oberfläche
             self.d["messung"] = {"audio": round(audio_sekunden), "rechen": round(sekunden), "peakMb": peak_mb,
                                  "zeit": time.time()}
+        werte = messwerte_bereinigen(messwerte)
+        if werte:
+            self.d["messwerte"] = {**werte, "zeit": time.time()}
         try:
             self.datei.write_text(json.dumps(self.d), encoding="utf-8")
         except OSError:
@@ -88,7 +92,7 @@ class Statistik:
     def fuer_oberflaeche(self) -> dict:
         heute = self.d.get("heute", 0) if self.d.get("tag") == date.today().isoformat() else 0
         return {"heute": heute, "gesamt": self.d.get("gesamt", 0), "zuletzt": self.d.get("zuletzt"),
-                "messung": self.d.get("messung")}
+                "messung": self.d.get("messung"), "messwerte": self.d.get("messwerte")}
 
 
 class Protokoll:
@@ -109,6 +113,66 @@ class Protokoll:
                     f.write(zeile + "\n")
             except OSError:
                 pass
+
+
+MESS_ZAHLEN = ("minutenJeStunde", "einlesenTokS", "schreibenTokS", "kontext", "kartenspeicherMb")
+MESS_TEXTE = ("art", "modell", "quantisierung", "karte")
+MESS_STUFEN = ("einlesen", "erkennung", "ausrichtung", "sprechertrennung", "auswertung")
+
+
+def messwerte_bereinigen(m) -> dict:
+    """Messwerte des letzten Auftrags (vom KI-Paket): nur bekannte Felder mit einfachen Werten."""
+    if not isinstance(m, dict):
+        return {}
+    aus: dict = {}
+    for k in MESS_ZAHLEN:
+        v = m.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v < 1e7:
+            aus[k] = round(float(v), 1)
+    for k in MESS_TEXTE:
+        v = m.get(k)
+        if isinstance(v, str) and v.strip():
+            aus[k] = v.strip()[:80]
+    for k in ("ganzAufKarte", "abgestuft"):
+        if isinstance(m.get(k), bool):
+            aus[k] = m[k]
+    stufen = m.get("stufen")
+    if isinstance(stufen, dict):
+        s = {k: round(float(stufen[k]), 1) for k in MESS_STUFEN
+             if isinstance(stufen.get(k), (int, float)) and not isinstance(stufen.get(k), bool) and stufen[k] >= 0}
+        if s:
+            aus["stufen"] = s
+    return aus
+
+
+def _zahl(x: float, stellen: int = 1) -> str:
+    return f"{x:.{stellen}f}".replace(".", ",")
+
+
+def messwerte_text(m: dict) -> str:
+    """Eine Zeile fürs Protokoll, z. B. „gemma4:12b (Q4_K_M), Kontext 32768 · Einlesen 850 Token/s · …“."""
+    m = messwerte_bereinigen(m)
+    teile = []
+    if m.get("art") == "abschrift":
+        if "minutenJeStunde" in m:
+            teile.append(f"{_zahl(m['minutenJeStunde'])} min Rechenzeit je Aufnahmestunde")
+        namen = {"einlesen": "Einlesen", "erkennung": "Erkennung", "ausrichtung": "Ausrichtung",
+                 "sprechertrennung": "Sprechertrennung", "auswertung": "Auswertung"}
+        teile += [f"{namen[k]} {_zahl(v / 60)} min" for k, v in (m.get("stufen") or {}).items()]
+    elif m.get("modell"):
+        teile.append(m["modell"] + (f" ({m['quantisierung']})" if m.get("quantisierung") else "")
+                     + (f", Kontext {int(m['kontext'])}" if m.get("kontext") else ""))
+        if "einlesenTokS" in m:
+            teile.append(f"Einlesen {_zahl(m['einlesenTokS'], 0)} Token/s")
+        if "schreibenTokS" in m:
+            teile.append(f"Schreiben {_zahl(m['schreibenTokS'])} Token/s")
+        if "ganzAufKarte" in m:
+            teile.append("ganz auf der Grafikkarte" if m["ganzAufKarte"] else "teils im Arbeitsspeicher")
+        if m.get("abgestuft"):
+            teile.append("kleiner gewählt, damit es auf die Grafikkarte passt")
+    if m.get("karte"):
+        teile.append(m["karte"] + (f" ({_zahl(m['kartenspeicherMb'] / 1024)} GB)" if m.get("kartenspeicherMb") else ""))
+    return " · ".join(teile)
 
 
 def fertig_text(e: dict) -> str:
@@ -389,8 +453,11 @@ class Dienst:
                 if e.get("tokenS"):
                     self.zustand["tokenS"] = e["tokenS"]
         elif art == "fertig":
-            self.statistik.erledigt(e.get("sekunden") or 0, e.get("audioSekunden"), e.get("peakVramMb"))
+            self.statistik.erledigt(e.get("sekunden") or 0, e.get("audioSekunden"), e.get("peakVramMb"),
+                                    e.get("messwerte"))
             self.protokoll.schreiben(fertig_text(e))
+            if messwerte_text(e.get("messwerte") or {}):
+                self.protokoll.schreiben("Messwerte: " + messwerte_text(e["messwerte"]))
         elif art == "fehlgeschlagen":
             self.protokoll.schreiben(f"Auftrag fehlgeschlagen: {e.get('code')} – {e.get('message')}")
             self.letzter_fehlschlag = {"code": e.get("code"), "zeit": time.time()}

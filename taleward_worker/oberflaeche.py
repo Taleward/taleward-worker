@@ -400,7 +400,8 @@ class Api:
             subprocess.Popen(["xdg-open", ziel], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def link_oeffnen(self, url: str) -> None:
-        if url.startswith("https://"):
+        """Nur https mit Host, ohne Zugangsdaten, Steuerzeichen und Backslashes (fenster.web_adresse)."""
+        if isinstance(url, str) and url.startswith("https://") and fenster.web_adresse(url):
             webbrowser.open(url)
 
     def fenster_verstecken(self) -> None:

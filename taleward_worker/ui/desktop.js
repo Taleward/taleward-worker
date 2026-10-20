@@ -301,6 +301,37 @@
   }
 
   // ------------------------------------------------------------ Verarbeitung
+  function messungZeilen(m) {
+    const z = [];
+    if (!m) return z;
+    if (m.art === "abschrift") {
+      if (m.minutenJeStunde != null) z.push(t("d_m_abschrift", { n: zahl(m.minutenJeStunde, 1) }));
+      const s = m.stufen || {};
+      ["einlesen", "erkennung", "ausrichtung", "sprechertrennung", "auswertung"].forEach((k) => {
+        if (s[k] != null) z.push(t("d_m_" + k) + ": " + t("d_m_min", { n: zahl(s[k] / 60, 1) }));
+      });
+    } else if (m.modell) {
+      z.push(m.modell + (m.quantisierung ? " (" + m.quantisierung + ")" : "") + (m.kontext ? ", " + t("d_m_kontext", { n: m.kontext }) : ""));
+      const tempo = [];
+      if (m.einlesenTokS != null) tempo.push(t("d_m_lesen_tok", { n: zahl(m.einlesenTokS, 0) }));
+      if (m.schreibenTokS != null) tempo.push(t("d_m_schreiben_tok", { n: zahl(m.schreibenTokS, 1) }));
+      if (tempo.length) z.push(tempo.join(" · "));
+      if (m.ganzAufKarte != null) z.push(t(m.ganzAufKarte ? "d_m_ganz" : "d_m_teils"));
+      if (m.abgestuft) z.push(t("d_m_abgestuft"));
+    }
+    if (m.karte) z.push(m.karte + (m.kartenspeicherMb ? " (" + zahl(m.kartenspeicherMb / 1024, 0) + " GB)" : ""));
+    return z;
+  }
+
+  function messungZeigen() {
+    const m = (S.dienst.statistik || {}).messwerte, zeilen = messungZeilen(m);
+    $("#vb-messung").hidden = !zeilen.length;
+    const ul = $("#vb-messung-liste"), schluessel = JSON.stringify(zeilen);
+    if (ul.dataset.s === schluessel) return;
+    ul.dataset.s = schluessel;
+    ul.replaceChildren(...zeilen.map((text) => { const li = document.createElement("li"); li.textContent = text; return li; }));
+  }
+
   function verarbeitungZeigen() {
     const d = S.dienst.zustand || {}, lauf = V && V.current;
     const arbeitet = d.art === "arbeitet" || !!lauf;
@@ -353,6 +384,7 @@
       }));
     }
     // Leistung
+    messungZeigen();
     reglerZeigen();
     const k = S.hardware && S.hardware.grafikkarte;
     $("#vb-prozessor-zeile").hidden = !(k && S.hardware.grafikkarteNutzbar) || !!S.einstellungen.testmodus;

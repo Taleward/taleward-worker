@@ -134,3 +134,7 @@ body.d.schmal .leiste__klappe svg { transform:rotate(180deg); }
 .d .toast { left:calc(50% + 124px); }
 body.d.schmal .toast { left:calc(50% + 36px); }
 @media (prefers-reduced-motion: reduce) { .zustand__balken > span, .d .balken > span, .aufklapp > summary::before { transition:none; } }
+
+/* Messwerte des letzten Auftrags (Verarbeitung → Leistung) */
+.liste-schlicht { list-style:none; margin:0 0 16px; padding:0; }
+.liste-schlicht li { padding:2px 0; }

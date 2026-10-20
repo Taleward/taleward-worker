@@ -35,6 +35,12 @@ EIGENER_PORT = 11435
 FREMDE_ADRESSE = "http://127.0.0.1:11434"
 AUS = "http://127.0.0.1:9"  # Worker ohne Sprachmodell: eine Adresse, unter der sicher nichts antwortet
 
+# Nur für das mitgelieferte Ollama (ein fremdes stellt der Worker nur je Anfrage ein: keep_alive, num_ctx): ein Modell,
+# eine Anfrage zur Zeit, Flash Attention mit halb so großem Zwischenspeicher – passt eher ganz auf die Grafikkarte.
+# Nach jedem Kapitel entlädt der Worker das Modell ohnehin sofort (keep_alive 0).
+OLLAMA_UMGEBUNG = {"OLLAMA_KEEP_ALIVE": "2m", "OLLAMA_MAX_LOADED_MODELS": "1", "OLLAMA_NUM_PARALLEL": "1",
+                   "OLLAMA_FLASH_ATTENTION": "1", "OLLAMA_KV_CACHE_TYPE": "q8_0"}
+
 
 def _system() -> str:
     return "windows" if sys.platform == "win32" else "linux"
@@ -248,7 +254,7 @@ class OllamaDienst:
             # Nichts von außen übernehmen, was Ollama öffnet oder umstellt (OLLAMA_ORIGINS, OLLAMA_HOST …)
             env = {k: v for k, v in os.environ.items() if not k.upper().startswith("OLLAMA_")}
             env.update({"OLLAMA_HOST": f"127.0.0.1:{EIGENER_PORT}", "OLLAMA_MODELS": str(modellordner()),
-                        "OLLAMA_KEEP_ALIVE": "2m", "OLLAMA_MAX_LOADED_MODELS": "1"})
+                        **OLLAMA_UMGEBUNG})
             protokoll_kuerzen(pfade.protokolle() / "ollama.log")
             log = open(pfade.protokolle() / "ollama.log", "ab")
             try:
