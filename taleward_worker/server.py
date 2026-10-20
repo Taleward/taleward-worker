@@ -82,10 +82,20 @@ def pruefen(adresse: str) -> dict:
     return {"name": daten.get("serverName") or daten.get("name") or "", "apiVersion": daten.get("apiVersion", "")}
 
 
+def code_finden(text: str) -> str:
+    """Kopplungscode aus der Eingabe, auch mit Text drumherum oder ohne Strich → „ABCD-EFGH“."""
+    roh = text.strip()
+    m = re.search(r"(?<![A-Za-z0-9])([A-Za-z0-9]{4})\s*-\s*([A-Za-z0-9]{4})(?![A-Za-z0-9])", roh)
+    if not m and re.search(r"\s", roh):
+        m = re.search(r"(?<![A-Za-z0-9])([A-Za-z0-9]{4})([A-Za-z0-9]{4})(?![A-Za-z0-9])", roh)
+    if m:
+        return f"{m[1]}-{m[2]}".upper()
+    code = re.sub(r"[^A-Z0-9]", "", roh.upper())
+    return f"{code[:4]}-{code[4:]}" if len(code) == 8 else roh.upper()
+
+
 def koppeln(adresse: str, code: str, name: str) -> dict:
-    code = code.strip().upper().replace(" ", "")
-    if re.fullmatch(r"[A-Z0-9]{8}", code):
-        code = f"{code[:4]}-{code[4:]}"
+    code = code_finden(code)
     try:
         with _klient() as k:
             r = k.post(f"{adresse}/worker/v1/pair", json={"code": code, "name": name.strip()[:60] or "worker"})

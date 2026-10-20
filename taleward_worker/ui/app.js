@@ -454,6 +454,18 @@
   }
   function dialogFehler(text) { const f = $("#dialog-fehler"); f.textContent = text; f.hidden = false; }
   function dialogZu() { const d = $("#dialog"); if (d.open) d.close(); }
+  function codeFormen(text) {
+    // Eingefügt mit Text drumherum („Kopplungscode: K7QM-2XPA …“): nur den Code nehmen
+    const roh = String(text || "");
+    const m = roh.match(/(?:^|[^A-Za-z0-9])([A-Za-z0-9]{4})\s*-\s*([A-Za-z0-9]{4})(?![A-Za-z0-9])/)
+      || (/\s/.test(roh.trim()) && roh.match(/(?:^|[^A-Za-z0-9])([A-Za-z0-9]{4})([A-Za-z0-9]{4})(?![A-Za-z0-9])/));
+    if (m) return (m[1] + "-" + m[2]).toUpperCase();
+    // Beim Tippen: Buchstaben und Ziffern, Strich nach dem vierten Zeichen (auch selbst getippt)
+    const v = roh.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+    if (v.length > 4) return v.slice(0, 4) + "-" + v.slice(4);
+    return v.length === 4 && /-\s*$/.test(roh) ? v + "-" : v;
+  }
+
   function feldfehler(praefix, code) {
     return t(praefix + code) !== praefix + code ? t(praefix + code) : t(praefix + "unbekannt");
   }
@@ -558,11 +570,7 @@
       const http = /^http:\/\//i.test(adresse.value.trim()) && !/^http:\/\/(localhost|127\.0\.0\.1)/i.test(adresse.value.trim());
       $("#unsicher-zeile").hidden = !http;
     });
-    $("#code").addEventListener("input", (e) => {
-      let v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
-      if (v.length > 4) v = v.slice(0, 4) + "-" + v.slice(4);
-      e.target.value = v;
-    });
+    $("#code").addEventListener("input", (e) => { e.target.value = codeFormen(e.target.value); });
     $("#verbinden").onclick = async () => {
       if (beschaeftigt) return;
       const fehler = $("#koppeln-fehler");
