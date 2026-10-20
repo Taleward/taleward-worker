@@ -1,0 +1,204 @@
+From fd2ee068e5300873cee47aa6ef29c362e09c4107 Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 21:56:39 +0200
+Subject: [PATCH] Worker 0.3.16
+
+---
+ pyproject.toml                      |  2 +-
+ taleward_worker/__init__.py         |  2 +-
+ taleward_worker/oberflaeche.py      |  5 ++++
+ taleward_worker/ui/desktop-texte.js |  6 +++++
+ taleward_worker/ui/desktop.html     | 10 ++++++++
+ taleward_worker/ui/desktop.js       | 36 ++++++++++++++++++++++++++---
+ tests/test_worker_0316.py           | 30 ++++++++++++++++++++++++
+ uv.lock                             |  2 +-
+ 8 files changed, 87 insertions(+), 6 deletions(-)
+ create mode 100644 tests/test_worker_0316.py
+
+diff --git a/pyproject.toml b/pyproject.toml
+index e6fc210..f19d81b 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-worker"
+-version = "0.3.15"
++version = "0.3.16"
+ description = "Taleward Worker – verarbeitet Aufnahmen für einen Taleward-Server auf dem eigenen PC mit Grafikkarte"
+ license = "AGPL-3.0-only"
+diff --git a/taleward_worker/__init__.py b/taleward_worker/__init__.py
+index 0e65d65..71696ec 100644
+--- a/taleward_worker/__init__.py
++++ b/taleward_worker/__init__.py
+@@ -4,5 +4,5 @@ Die App selbst ist klein. Das KI-Paket (Taleward-Server mit WhisperX, einige GB)
+ passender Fassung zum verbundenen Server und startet es als Unterprozess („chronik worker --app“).
+ """
+-VERSION = "0.3.15"
++VERSION = "0.3.16"
+ REPO = "Taleward/taleward-server"        # Server-Code = KI-Paket (engine-requirements.txt, Tags v…)
+ APP_REPO = "Taleward/taleward-worker"   # diese App
+diff --git a/taleward_worker/oberflaeche.py b/taleward_worker/oberflaeche.py
+index 424bc84..b25dd16 100644
+--- a/taleward_worker/oberflaeche.py
++++ b/taleward_worker/oberflaeche.py
+@@ -142,4 +142,9 @@ class Api:
+             webbrowser.open(einzelplatz.APP_ADRESSE)
+ 
++    def verwaltung_im_browser(self) -> None:
++        """Ausweichlösung, solange die Verwaltung nicht im Fenster geht: feste Adresse dieses PCs im Browser."""
++        if self._app.e.einzelplatz:
++            webbrowser.open(huelle.APP_HERKUNFT + "/verwaltung/")
++
+     def netz_freigeben(self, wert: str) -> dict:
+         """Firewall-Regel anlegen (Windows fragt nach Administratorrechten)."""
+diff --git a/taleward_worker/ui/desktop-texte.js b/taleward_worker/ui/desktop-texte.js
+index c09b1ef..d211f61 100644
+--- a/taleward_worker/ui/desktop-texte.js
++++ b/taleward_worker/ui/desktop-texte.js
+@@ -32,4 +32,7 @@ window.DTEXTE = {
+     d_app_startet: "Taleward startet", d_app_startet_text: "Gleich geht es los. Beim ersten Start lädt Taleward die App, das dauert ein paar Minuten.",
+     d_app_fehlt_text: "Die App ließ sich noch nicht laden. Prüf die Internetverbindung, Taleward versucht es weiter.",
++    d_verwaltung_alt_text: "Die Verwaltung im Fenster braucht Taleward ab Fassung 0.4.112. Das Update dauert ein paar Minuten, deine Kampagnen bleiben, wie sie sind. Bis dahin geht sie im Browser.",
++    d_verwaltung_startet_text: "Die Verwaltung erscheint hier, sobald Taleward läuft.",
++    d_upd_noch_nicht: "Die nötige Fassung ist noch nicht verfügbar. Taleward sieht täglich nach und aktualisiert sich dann selbst. Bis dahin geht es im Browser.",
+     d_app_alt: "Dafür braucht es eine neuere Fassung", d_app_alt_text: "Diese Ansicht braucht Taleward ab Fassung 0.4.112. Das Update dauert ein paar Minuten, deine Kampagnen bleiben, wie sie sind. Bis dahin geht es im Browser.",
+     d_app_fehler: "Taleward braucht deine Hilfe", d_app_fehler_text: "Taleward läuft gerade nicht. In der Übersicht steht, was zu tun ist.",
+@@ -156,4 +159,7 @@ window.DTEXTE = {
+     d_app_startet: "Taleward is starting", d_app_startet_text: "Almost there. On the first start Taleward downloads the app, which takes a few minutes.",
+     d_app_fehlt_text: "The app could not be loaded yet. Check the internet connection, Taleward keeps trying.",
++    d_verwaltung_alt_text: "The administration in this window needs Taleward 0.4.112 or later. The update takes a few minutes and your campaigns stay as they are. Until then, use the browser.",
++    d_verwaltung_startet_text: "The administration appears here as soon as Taleward is running.",
++    d_upd_noch_nicht: "The required version is not available yet. Taleward checks daily and then updates itself. Until then, use the browser.",
+     d_app_alt: "This needs a newer version", d_app_alt_text: "This view needs Taleward 0.4.112 or later. The update takes a few minutes and your campaigns stay as they are. Until then, use the browser.",
+     d_app_fehler: "Taleward needs your attention", d_app_fehler_text: "Taleward is not running right now. The overview says what to do.",
+diff --git a/taleward_worker/ui/desktop.html b/taleward_worker/ui/desktop.html
+index fefcfeb..e2f16b3 100644
+--- a/taleward_worker/ui/desktop.html
++++ b/taleward_worker/ui/desktop.html
+@@ -57,4 +57,14 @@
+     <strong data-t="d_verwaltung"></strong>
+   </div>
++  <div class="rahmen__hinweis" id="verwaltung-hinweis" hidden>
++    <div class="karte">
++      <h1 id="verwaltung-hinweis-titel"></h1>
++      <p class="leise" id="verwaltung-hinweis-text"></p>
++      <div class="knopfreihe">
++        <button class="tw-btn tw-btn--primary" id="verwaltung-hinweis-update" type="button" data-t="Jetzt aktualisieren" hidden></button>
++        <button class="tw-btn tw-btn--secondary" id="verwaltung-hinweis-browser" type="button" data-t="Im Browser öffnen" hidden></button>
++      </div>
++    </div>
++  </div>
+   <iframe id="rahmen-verwaltung" title="Verwaltung" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals" allow="clipboard-write" referrerpolicy="no-referrer"></iframe>
+ </section>
+diff --git a/taleward_worker/ui/desktop.js b/taleward_worker/ui/desktop.js
+index f2630c9..b821ab5 100644
+--- a/taleward_worker/ui/desktop.js
++++ b/taleward_worker/ui/desktop.js
+@@ -128,11 +128,37 @@
+     if (!titel && !f.getAttribute("src")) f.src = APP + appZiel;
+   }
++  // Verwaltung im Rahmen erst, wenn der Server läuft und neu genug ist (ab 0.4.112 darf die Oberfläche sie einbetten) –
++  // sonst zeigt WebView2 nur „Verbindung verweigert“. Bis dahin ein Hinweis mit Update und dem Weg über den Browser.
++  function verwaltungHinweis() {
++    const tw = S.taleward || {}, z = (tw.zustand || {}).art;
++    let titel = "", text = "", update = false, browser = false;
++    if (S.serverVersion && !fassungMindestens(S.serverVersion, MINDEST_SERVER)) {
++      titel = t("d_app_alt"); text = t("d_verwaltung_alt_text"); update = true; browser = true;
++    } else if (z === "fehler") {
++      titel = t("d_app_fehler"); text = t("d_app_fehler_text");
++    } else if (!S.serverVersion) {
++      titel = t("d_app_startet"); text = t("d_verwaltung_startet_text");
++    }
++    const h = $("#verwaltung-hinweis");
++    h.hidden = !titel;
++    $("#rahmen-verwaltung").hidden = !!titel;
++    if (titel) {
++      $("#verwaltung-hinweis-titel").textContent = titel; $("#verwaltung-hinweis-text").textContent = text;
++      $("#verwaltung-hinweis-update").hidden = !update; $("#verwaltung-hinweis-browser").hidden = !browser;
++    }
++    return !titel;
++  }
+   async function verwaltungLaden() {
+     const f = $("#rahmen-verwaltung");
++    // die gewünschte Seite bleibt gemerkt, bis der Server bereit ist
++    if (!verwaltungHinweis() || verwaltungLaden.laeuft) return;
+     const seite = verwaltungLaden.seite || "";
+     verwaltungLaden.seite = "";
+     if (f.getAttribute("src") && !seite) return;
+-    const r = await api.verwaltung_adresse(seite);
+-    if (r && r.ok) f.src = r.adresse;
++    verwaltungLaden.laeuft = true;
++    try {
++      const r = await api.verwaltung_adresse(seite);
++      if (r && r.ok) f.src = r.adresse;
++    } finally { verwaltungLaden.laeuft = false; }
+   }
+ 
+@@ -574,4 +600,5 @@
+     leisteZeigen();
+     if (RAHMEN_APP.includes(bereich)) appZeigen();
++    if (bereich === "verwaltung" && !$("#rahmen-verwaltung").getAttribute("src")) verwaltungLaden();
+     if (bereich === "uebersicht") uebersichtZeigen();
+     if (bereich === "verarbeitung") verarbeitungZeigen();
+@@ -601,7 +628,10 @@
+     $("#app-hinweis-update").onclick = async () => {
+       const r = await riskant("taleward_aktualisieren");
+-      if (!r || !r.ok) toast(t(r && r.grund === "aktuell" ? "tw_upd_aktuell" : "tw_upd_spaeter"));
++      // „aktuell“, obwohl die Fassung zu alt ist: die nötige Fassung ist noch nicht freigegeben
++      if (!r || !r.ok) toast(t(r && r.grund === "aktuell" ? "d_upd_noch_nicht" : "tw_upd_spaeter"));
+     };
+     $("#app-hinweis-browser").onclick = () => api.im_browser_oeffnen();
++    $("#verwaltung-hinweis-update").onclick = $("#app-hinweis-update").onclick;
++    $("#verwaltung-hinweis-browser").onclick = () => api.verwaltung_im_browser();
+     $("#verwaltung-zurueck").onclick = () => bereichZeigen("einstellungen");
+     $("#vb-pause").onclick = async () => { await api.pausieren(!S.einstellungen.pausiert); neuLaden(); };
+diff --git a/tests/test_worker_0316.py b/tests/test_worker_0316.py
+new file mode 100644
+index 0000000..5eca805
+--- /dev/null
++++ b/tests/test_worker_0316.py
+@@ -0,0 +1,30 @@
++"""Worker 0.3.16: Die Verwaltung im Fenster erst, wenn der Server läuft und neu genug ist – sonst ein Hinweis mit Update
++und dem Weg über den Browser (statt „Verbindung verweigert“ im Rahmen)."""
++import types
++from pathlib import Path
++
++UI = Path(__file__).resolve().parent.parent / "taleward_worker" / "ui"
++
++
++def test_verwaltung_mit_hinweis_statt_leerem_rahmen():
++    html = (UI / "desktop.html").read_text(encoding="utf-8")
++    js = (UI / "desktop.js").read_text(encoding="utf-8")
++    texte = (UI / "desktop-texte.js").read_text(encoding="utf-8")
++    assert 'id="verwaltung-hinweis"' in html and html.index('id="verwaltung-hinweis"') < html.index('id="rahmen-verwaltung"')
++    assert "function verwaltungHinweis()" in js and "if (!verwaltungHinweis() || verwaltungLaden.laeuft) return;" in js
++    assert "api.verwaltung_im_browser()" in js
++    for k in ("d_verwaltung_alt_text:", "d_verwaltung_startet_text:", "d_upd_noch_nicht:"):
++        assert texte.count(k) == 2, k  # Deutsch und Englisch
++
++
++def test_verwaltung_im_browser_nur_bei_alles_auf_diesem_pc(monkeypatch):
++    from taleward_worker import oberflaeche
++
++    geoeffnet = []
++    monkeypatch.setattr(oberflaeche.webbrowser, "open", lambda u, *a, **k: geoeffnet.append(u))
++    api = types.SimpleNamespace(_app=types.SimpleNamespace(e=types.SimpleNamespace(einzelplatz=False)))
++    oberflaeche.Api.verwaltung_im_browser(api)
++    assert geoeffnet == []
++    api._app.e.einzelplatz = True
++    oberflaeche.Api.verwaltung_im_browser(api)
++    assert geoeffnet == ["http://localhost:8000/verwaltung/"]
+diff --git a/uv.lock b/uv.lock
+index 221bf2f..73568ac 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -677,5 +677,5 @@ wheels = [
+ [[package]]
+ name = "taleward-worker"
+-version = "0.3.15"
++version = "0.3.16"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
