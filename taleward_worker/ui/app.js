@@ -348,7 +348,7 @@
         if (u.moeglich && (u.phase === "bereit" || u.phase === "fehler")) {
           const b = document.createElement("button"); b.className = "tw-btn tw-btn--secondary";
           b.textContent = t("Jetzt aktualisieren");
-          b.onclick = () => { api.app_aktualisieren(); setTimeout(neuLaden, 300); };
+          b.onclick = () => { riskant("app_aktualisieren"); setTimeout(neuLaden, 300); };
           au.append(b);
         }
         if (u.notizen) {
@@ -368,14 +368,14 @@
     if (art === "gestoppt") liste.push(["Starten", "primary", () => api.starten()]);
     if (art === "fehler" && S.dienst.zustand.code === "modell" && einzelplatz()) {
       // Stimmen erkennen einrichten: genau die Stelle in der Verwaltung, mit Anleitung (Quelle der Wahrheit für den Weg)
-      liste.push(["Stimmen erkennen einrichten", "primary", () => api.verwaltung_oeffnen("transkription#hf")]);
+      liste.push(["Stimmen erkennen einrichten", "primary", () => api.taleward_oeffnen()]);
       liste.push(["Protokoll ansehen", "quiet", () => zeigeReiter("protokoll")]);
     } else if (art === "fehler" || art === "abgestuerzt") {
       if (["motor_fehlt", "motor_kaputt"].includes(S.dienst.zustand.code || "")) liste.push(["Installieren", "primary", () => { schritt = 2; }]);
       else liste.push(["Erneut versuchen", "primary", () => api.starten()]);
       liste.push(["Protokoll ansehen", "quiet", () => zeigeReiter("protokoll")]);
     }
-    if (art === "abgelehnt") liste.push(["Neu koppeln", "primary", () => api.entkoppeln().then(neuLaden)]);
+    if (art === "abgelehnt") liste.push(["Neu koppeln", "primary", () => riskant("entkoppeln").then(neuLaden)]);
     const schluessel = art + "|" + liste.map((x) => x[0]).join(",") + "|" + sprache;
     if (ziel.dataset.s === schluessel) return;
     ziel.dataset.s = schluessel;
@@ -506,7 +506,7 @@
     try {
       if (dialogArt === "betrieb") {
         const regelWeg = !$("#betrieb-regel-zeile").hidden && $("#betrieb-regel").checked;
-        const r = await api.betrieb_wechseln(ok.dataset.ziel, regelWeg);
+        const r = await riskant("betrieb_wechseln", ok.dataset.ziel, regelWeg);
         if (!r.ok) return dialogFehler(feldfehler("betrieb_f_", r.fehler));
         dialogZu(); fertigZeigen = false; schritt = null; reiter = "status";
         setTimeout(neuLaden, 300);
@@ -515,7 +515,7 @@
         if (!r.ok) { if (r.fehler !== "abgebrochen") dialogFehler(feldfehler("sich_f_", r.fehler)); return; }
         dialogZu(); neuLaden();
       } else if (dialogArt === "zurueck") {
-        const r = await api.sicherung_zurueckspielen($("#zurueck-passwort").value);
+        const r = await riskant("sicherung_zurueckspielen", $("#zurueck-passwort").value);
         if (!r.ok) return dialogFehler(feldfehler("sich_f_", r.fehler));
         dialogZu(); neuLaden();
       } else if (dialogArt === "hilfe") {
@@ -564,6 +564,14 @@
     if (unten || ganz) el.scrollTop = el.scrollHeight;
   }
 
+  // Folgenreiches braucht den Prüfwert aus dem Zustand (gilt für einen Aufruf)
+  async function riskant(name, ...args) {
+    if (!S) await neuLaden();
+    let r = await api[name](S.pruefwert, ...args);
+    if (r && r.fehler === "pruefwert") { await neuLaden(); r = await api[name](S.pruefwert, ...args); }
+    return r;
+  }
+
   async function neuLaden() {
     try { S = await api.zustand(); } catch (e) { return; }
     darstellen();
@@ -591,7 +599,7 @@
         const pr = await api.server_pruefen(adresse.value);
         if (!pr.ok) { fehler.textContent = t("f_" + pr.fehler); fehler.hidden = false; return; }
         adresse.value = pr.adresse;
-        const r = await api.koppeln(pr.adresse, $("#code").value, $("#name").value, $("#unsicher").checked);
+        const r = await riskant("koppeln", pr.adresse, $("#code").value, $("#name").value, $("#unsicher").checked);
         if (!r.ok) {
           fehler.textContent = r.text || t("f_" + r.fehler);
           if (r.fehler === "unverschluesselt") $("#unsicher-zeile").hidden = false;
@@ -619,14 +627,14 @@
     };
     $("#taleward-oeffnen").onclick = () => api.taleward_oeffnen();
     $("#taleward-browser").onclick = () => api.im_browser_oeffnen();
-    $("#taleward-neustart").onclick = () => { api.taleward_neu_starten(); setTimeout(neuLaden, 300); };
+    $("#taleward-neustart").onclick = () => { riskant("taleward_neu_starten"); setTimeout(neuLaden, 300); };
     $("#taleward-aktualisieren").onclick = async () => {
-      const r = await api.taleward_aktualisieren();
+      const r = await riskant("taleward_aktualisieren");
       if (!r.ok) toast(t(r.grund === "aktuell" ? "tw_upd_aktuell" : "tw_upd_spaeter"));
       neuLaden();
     };
     $("#netz-freigeben").onclick = async () => {
-      const r = await api.netz_freigeben();
+      const r = await riskant("netz_freigeben");
       if (!r.ok) toast(t("netz_abgelehnt"));
       neuLaden();
     };
@@ -634,7 +642,7 @@
     $("#weiter-installieren").onclick = () => { schritt = 3; testWahl = false; prozessorWahl = false; darstellen(); };
     $("#prozessor-waehlen").onclick = () => { schritt = 3; testWahl = false; prozessorWahl = true; darstellen(); };
     $("#testmodus-waehlen").onclick = () => { schritt = 3; testWahl = true; prozessorWahl = false; darstellen(); };
-    $("#installieren").onclick = async () => { await api.installieren(testmodus(), prozessorWahl); fertigZeigen = true; neuLaden(); };
+    $("#installieren").onclick = async () => { await riskant("installieren", testmodus(), prozessorWahl); fertigZeigen = true; neuLaden(); };
     $("#nur-prozessor").addEventListener("change", async (e) => {
       await api.einstellung("geraet", e.target.checked ? "cpu" : "auto"); neuLaden();
     });
@@ -654,7 +662,7 @@
         await neuLaden();
       });
     });
-    $("#inst-nochmal").onclick = async () => { await api.installieren(testmodus()); neuLaden(); };
+    $("#inst-nochmal").onclick = async () => { await riskant("installieren", testmodus()); neuLaden(); };
     $("#inst-abbrechen").onclick = () => api.installation_abbrechen();
     $("#los").onclick = async () => {
       fertigZeigen = false; schritt = null;
@@ -673,12 +681,12 @@
     });
     $("#ordner").onclick = () => api.ordner_oeffnen();
     $("#log-ordner").onclick = () => api.ordner_oeffnen();
-    $("#verwaltung").onclick = () => api.verwaltung_oeffnen();
-    $("#ollama-entfernen").onclick = async () => { if (confirm(t("bestaetigen_ollama"))) { await api.ollama_entfernen(); speicherLaden(); neuLaden(); } };
-    $("#neu-koppeln").onclick = async () => { if (confirm(t("bestaetigen_koppeln", { server: serverName() }))) { await api.entkoppeln(); reiter = "status"; neuLaden(); } };
-    $("#neu-installieren").onclick = async () => { await api.installieren(!!S.einstellungen.testmodus); reiter = "status"; zeigeReiter("status"); neuLaden(); };
-    $("#entfernen").onclick = async () => { if (confirm(t("bestaetigen_entfernen"))) { await api.ki_entfernen(true); schritt = 2; reiter = "status"; neuLaden(); } };
-    $("#beenden").onclick = () => api.beenden();
+    $("#verwaltung").onclick = () => api.taleward_oeffnen();
+    $("#ollama-entfernen").onclick = async () => { if (confirm(t("bestaetigen_ollama"))) { await riskant("ollama_entfernen"); speicherLaden(); neuLaden(); } };
+    $("#neu-koppeln").onclick = async () => { if (confirm(t("bestaetigen_koppeln", { server: serverName() }))) { await riskant("entkoppeln"); reiter = "status"; neuLaden(); } };
+    $("#neu-installieren").onclick = async () => { await riskant("installieren", !!S.einstellungen.testmodus); reiter = "status"; zeigeReiter("status"); neuLaden(); };
+    $("#entfernen").onclick = async () => { if (confirm(t("bestaetigen_entfernen"))) { await riskant("ki_entfernen", true); schritt = 2; reiter = "status"; neuLaden(); } };
+    $("#beenden").onclick = () => riskant("beenden");
     $("#betrieb-wechseln").onclick = betriebFragen;
     $("#sicherung-speichern").onclick = () => dialogOeffnen("speichern", t("Sicherung speichern"), t("Speichern …"));
     $("#sicherung-zurueck").onclick = zurueckFragen;
@@ -712,7 +720,7 @@
 
   // ------------------------------------------------------------ Start
   async function start() {
-    api = window.pywebview.api;
+    api = window.TalewardBruecke.api;
     uebersetzen();
     binden();
     await neuLaden();
@@ -721,6 +729,5 @@
     setInterval(neuLaden, 700);
     setInterval(() => logLaden(false), 2000);
   }
-  if (window.pywebview && window.pywebview.api) start();
-  else window.addEventListener("pywebviewready", start);
+  window.TalewardBruecke.bereit().then(start);
 })();
