@@ -33,8 +33,8 @@ def test_wechsel_von_server_zu_alles_auf_diesem_pc(monkeypatch):
     monkeypatch.setattr(app, "installieren", lambda testmodus: installiert.append(testmodus))
     monkeypatch.setattr(app, "taleward_starten", lambda: gestartet.append(1))
     monkeypatch.setattr(motor, "installiert", lambda: {"fassung": "0.4.93"})  # für den Verein, zu alt
-    assert api.betrieb_wechseln("verbunden") == {"ok": False, "fehler": "unbekannt"}  # ist schon so
-    assert api.betrieb_wechseln("einzelplatz") == {"ok": True}
+    assert api.betrieb_wechseln(api._pruefwert, "verbunden") == {"ok": False, "fehler": "unbekannt"}  # ist schon so
+    assert api.betrieb_wechseln(api._pruefwert, "einzelplatz") == {"ok": True}
     assert _warten(lambda: app.e.einzelplatz)
     assert _warten(lambda: installiert == [False])
     assert gestoppt and not app.e.token and not gestartet
@@ -64,17 +64,17 @@ def test_wechsel_zurueck_zum_server_behaelt_die_kampagnen(monkeypatch):
 def test_kein_wechsel_mitten_in_der_arbeit(monkeypatch):
     app, api = _app(monkeypatch, betrieb="verbunden", server="https://verein.invalid", token="wk.1.x")
     app.dienst.zustand = {"art": "arbeitet"}
-    assert api.betrieb_wechseln("einzelplatz") == {"ok": False, "fehler": "arbeitet"}
+    assert api.betrieb_wechseln(api._pruefwert, "einzelplatz") == {"ok": False, "fehler": "arbeitet"}
     app.dienst.zustand = {"art": "warte"}
     app.installation = SimpleNamespace(phase="pakete")
-    assert api.betrieb_wechseln("einzelplatz") == {"ok": False, "fehler": "beschaeftigt"}
+    assert api.betrieb_wechseln(api._pruefwert, "einzelplatz") == {"ok": False, "fehler": "beschaeftigt"}
     assert app.e.art == "verbunden"
 
 
 def test_neu_koppeln_bleibt_beim_server(monkeypatch):
     app, api = _app(monkeypatch, betrieb="verbunden", server="https://verein.invalid", token="wk.1.x")
     monkeypatch.setattr(app.dienst, "stoppen", lambda *a, **k: None)
-    api.entkoppeln()
+    api.entkoppeln(api._pruefwert)
     assert app.e.art == "verbunden" and not app.e.gekoppelt and app.e.server == "https://verein.invalid"
 
 

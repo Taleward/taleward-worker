@@ -49,7 +49,7 @@ def test_sicherung_zurueckspielen(monkeypatch, tmp_path):
     datei = tmp_path / "alt.taleward"
     datei.write_bytes(b"TWSICH01")
     monkeypatch.setattr(app, "datei_waehlen", lambda **k: datei)
-    assert api.sicherung_zurueckspielen("Lindwurm-Kessel-7")["fehler"] == "keine_datei"
+    assert api.sicherung_zurueckspielen(api._pruefwert, "Lindwurm-Kessel-7")["fehler"] == "keine_datei"
     assert api.sicherung_waehlen() == {"ok": True, "datei": "alt.taleward"}
     ablauf = []
     monkeypatch.setattr(app.dienst, "stoppen", lambda *a, **k: ablauf.append("worker aus"))
@@ -57,14 +57,14 @@ def test_sicherung_zurueckspielen(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "taleward_starten", lambda: ablauf.append("taleward an"))
     cli = _Cli(2)
     monkeypatch.setattr(app.ep_update, "cli", cli)
-    assert api.sicherung_zurueckspielen("falsch-123") == {"ok": True}
+    assert api.sicherung_zurueckspielen(api._pruefwert, "falsch-123") == {"ok": True}
     assert _warten(lambda: app.sicherung.phase == "fehler")
     assert app.sicherung.fehler == "passwort" and ablauf == ["worker aus", "taleward aus", "taleward an"]
     assert cli.aufrufe == [(("sicherung-import", str(datei), "--ja"), "falsch-123\n")]
     assert not app.e.konto_angelegt
     cli.code = 0
     ablauf.clear()
-    assert api.sicherung_zurueckspielen("Lindwurm-Kessel-7") == {"ok": True}
+    assert api.sicherung_zurueckspielen(api._pruefwert, "Lindwurm-Kessel-7") == {"ok": True}
     assert _warten(lambda: app.sicherung.phase == "fertig")
     assert ablauf[-1] == "taleward an" and app.e.konto_angelegt  # neuer PC: das Konto kam mit der Sicherung
     assert app.sicherung.gewaehlt is None
@@ -74,8 +74,8 @@ def test_sicherung_nicht_waehrend_eines_updates(monkeypatch):
     app, api = _app(monkeypatch, betrieb="einzelplatz", konto_angelegt=True)
     app.ep_update.phase = "tauschen"
     app.sicherung.gewaehlt = Path(__file__)
-    assert api.sicherung_zurueckspielen("Lindwurm-Kessel-7")["fehler"] == "beschaeftigt"
-    assert api.betrieb_wechseln("verbunden")["fehler"] == "beschaeftigt"
+    assert api.sicherung_zurueckspielen(api._pruefwert, "Lindwurm-Kessel-7")["fehler"] == "beschaeftigt"
+    assert api.betrieb_wechseln(api._pruefwert, "verbunden")["fehler"] == "beschaeftigt"
 
 
 def test_sicherung_nur_bei_alles_auf_diesem_pc(monkeypatch):

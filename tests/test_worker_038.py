@@ -55,7 +55,7 @@ def test_entwickleransicht_nur_mit_taleward_debug(monkeypatch):
         else:
             monkeypatch.delenv("TALEWARD_DEBUG", raising=False)
         w = types.SimpleNamespace(native=form)
-        fenster.abdichten(w, "http://localhost:8000/app/")
+        fenster.abdichten(w, "http://localhost:51234", "http://localhost:51234/desktop.html")
         assert core.Settings.AreDevToolsEnabled is erwartet
 
 
@@ -97,29 +97,30 @@ def _app(monkeypatch, **einstellungen):
 
 
 def test_verwaltung_nur_bei_alles_auf_diesem_pc(monkeypatch):
-    from taleward_worker import oberflaeche
-
-    geoeffnet = []
-    monkeypatch.setattr(oberflaeche.webbrowser, "open", lambda url, *a, **k: geoeffnet.append(url))
     app, api = _app(monkeypatch, betrieb="verbunden", server="https://taleward.example", token="wk.1.x")
-    api.verwaltung_oeffnen()
-    assert geoeffnet == []
+    gezeigt = []
+    monkeypatch.setattr(app, "bereich_zeigen", lambda b: gezeigt.append(b))
+    app.verwaltung_oeffnen()
+    assert gezeigt == [] and api.verwaltung_adresse() == {"ok": False}
     app.e.betrieb = "einzelplatz"
-    api.verwaltung_oeffnen()
-    assert geoeffnet == ["http://127.0.0.1:8000/verwaltung"]
+    app.verwaltung_oeffnen()
+    assert gezeigt == ["verwaltung"]  # im Fenster, nicht im Browser
+    assert api.verwaltung_adresse() == {"ok": True, "adresse": "http://localhost:8000/verwaltung/"}
+    assert api.verwaltung_adresse("transkription#hf")["adresse"] == "http://localhost:8000/verwaltung/transkription#hf"
+    assert api.verwaltung_adresse("https://boese.example/") == {"ok": False}
 
 
-def test_taleward_oeffnen_schickt_das_programm_in_den_infobereich(monkeypatch):
-    app, api = _app(monkeypatch, betrieb="einzelplatz", konto_angelegt=True)
-    versteckt = []
-    monkeypatch.setattr(app, "app_fenster_oeffnen", lambda: True)
-    monkeypatch.setattr(app, "verstecken", lambda: versteckt.append(1))
-    app.fenster, app.tray = object(), None
-    assert api.taleward_oeffnen() == {"ok": True} and versteckt == []  # ohne Infobereich bleibt das Fenster
-    app.tray = object()
-    assert api.taleward_oeffnen() == {"ok": True} and versteckt == [1]
-    monkeypatch.setattr(app, "app_fenster_oeffnen", lambda: False)  # App noch nicht bereit: Programm bleibt
-    assert api.taleward_oeffnen() == {"ok": False} and versteckt == [1]
+def test_taleward_oeffnen_wechselt_zu_taleward_desktop(monkeypatch):
+    from taleward_worker import motor
+
+    app, api = _app(monkeypatch, betrieb="einzelplatz", konto_angelegt=False)
+    monkeypatch.setattr(motor, "installiert", lambda: {"fassung": "0.4.112"})
+    angewendet = []
+    monkeypatch.setattr(app, "ansicht_anwenden", lambda: angewendet.append(app.ansicht_soll()))
+    monkeypatch.setattr(app, "bereich_zeigen", lambda b: angewendet.append(b))
+    assert api.taleward_oeffnen() == {"ok": False} and angewendet == []  # noch kein Konto: kleines Fenster bleibt
+    app.e.konto_angelegt = True
+    assert api.taleward_oeffnen() == {"ok": True} and angewendet == ["desktop", "kampagnen"]
 
 
 def test_hilfe_noetig_holt_das_programm_nach_vorn(monkeypatch):

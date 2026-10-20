@@ -12,13 +12,6 @@ def test_eigene_seite():
         assert not eigene_seite(boese), boese
 
 
-def test_keine_bruecke():
-    from taleward_worker.fenster import KeineBruecke
-
-    k = KeineBruecke()
-    assert getattr(k, "__class__", None) is None and getattr(k, "beenden", None) is None and dir(k) == []
-
-
 # ---------------------------------------------------------------- Netzwerk-Freigabe (Windows)
 def test_firewall_regel_nur_wie_vorgesehen():
     import base64
@@ -175,7 +168,10 @@ class _Fenster:
         self.geladen.append(url)
 
 
-def test_app_fenster_laedt_erst_eine_leere_seite(monkeypatch):
+HERKUNFT = "http://localhost:51234"
+
+
+def test_hauptfenster_laedt_erst_eine_leere_seite(monkeypatch):
     import webview
 
     from taleward_worker import fenster
@@ -184,18 +180,19 @@ def test_app_fenster_laedt_erst_eine_leere_seite(monkeypatch):
     monkeypatch.setattr(webview, "create_window", lambda titel, url=None, **k: erzeugt.append(
         _Fenster(url=url, **k)) or erzeugt[-1])
     monkeypatch.setattr(fenster.sys, "platform", "linux")
-    w = fenster.app_fenster("http://localhost:8000/app/")
-    assert w.k["url"] is None and "<body" in w.k["html"]  # nicht gleich die App
+    w = fenster.hauptfenster("Taleward", HERKUNFT + "/desktop.html", HERKUNFT, object(), width=900, height=600)
+    assert w.k["url"] is None and "<body" in w.k["html"]  # nicht gleich die Oberfläche
     for h in w.events.loaded.handler:
         h()
-    assert w.geladen == ["http://localhost:8000/app/"]
+    assert w.geladen == [HERKUNFT + "/desktop.html"]
     for h in w.events.loaded.handler:  # weitere Ladevorgänge ändern nichts
         h()
-    assert w.geladen == ["http://localhost:8000/app/"]
+    assert w.geladen == [HERKUNFT + "/desktop.html"]
     import pytest
 
-    with pytest.raises(ValueError):
-        fenster.app_fenster("https://boese.example/")
+    for boese in ("http://localhost:8000/app/", "https://boese.example/", "http://127.0.0.1:51234/desktop.html"):
+        with pytest.raises(ValueError):
+            fenster.hauptfenster("Taleward", boese, HERKUNFT, object())
 
 
 def _webview2_attrappe(monkeypatch, mit_schema_ereignis=True):
@@ -238,13 +235,14 @@ def test_unter_windows_regeln_vor_der_app_und_keine_fremden_schemata(monkeypatch
     core, form = _webview2_attrappe(monkeypatch)
     monkeypatch.setattr(fenster.sys, "platform", "win32")
     w = types.SimpleNamespace(native=form)
-    fenster.abdichten(w, "http://localhost:8000/app/")
+    fenster.abdichten(w, HERKUNFT, HERKUNFT + "/desktop.html")
     assert w._taleward_dicht and core.Settings.AreDevToolsEnabled is False
-    assert core.aufrufe == [("navigate", "http://localhost:8000/app/", 1)]  # App erst nach den Regeln
+    assert core.Settings.AreDefaultContextMenusEnabled is False
+    assert core.aufrufe == [("navigate", HERKUNFT + "/desktop.html", 1)]  # Oberfläche erst nach den Regeln
     args = types.SimpleNamespace(Uri="ms-settings:privacy", Cancel=False)
     core.LaunchingExternalUriScheme.handler[0](None, args)
     assert args.Cancel is True
-    fenster.abdichten(w, "http://localhost:8000/app/")  # zweites Laden: nichts mehr
+    fenster.abdichten(w, HERKUNFT, HERKUNFT + "/desktop.html")  # zweites Laden: nichts mehr
     assert len(core.aufrufe) == 1
 
 
@@ -256,7 +254,7 @@ def test_aeltere_webview2_ohne_schema_ereignis(monkeypatch):
     core, form = _webview2_attrappe(monkeypatch, mit_schema_ereignis=False)
     monkeypatch.setattr(fenster.sys, "platform", "win32")
     w = types.SimpleNamespace(native=form, destroy=lambda: (_ for _ in ()).throw(AssertionError("geschlossen")))
-    fenster.abdichten(w, "http://localhost:8000/app/")
+    fenster.abdichten(w, HERKUNFT, HERKUNFT + "/desktop.html")
     assert w._taleward_dicht and core.aufrufe
 
 

@@ -64,16 +64,10 @@ def test_fenster_im_dunklen_thema_ohne_hellen_blitz(monkeypatch):
 
 
 def test_stimmen_erkennen_einrichten_oeffnet_die_richtige_stelle(monkeypatch):
-    from taleward_worker import oberflaeche
-
-    geoeffnet = []
-    monkeypatch.setattr(oberflaeche.webbrowser, "open", lambda url, *a, **k: geoeffnet.append(url))
     app, api = _app(monkeypatch, betrieb="einzelplatz")
-    api.verwaltung_oeffnen("transkription#hf")
-    api.verwaltung_oeffnen("../../irgendwohin")  # nur feste Ziele
-    api.verwaltung_oeffnen()
-    assert geoeffnet == ["http://127.0.0.1:8000/verwaltung/transkription#hf", "http://127.0.0.1:8000/verwaltung",
-                         "http://127.0.0.1:8000/verwaltung"]
+    assert api.verwaltung_adresse("transkription#hf")["adresse"] == "http://localhost:8000/verwaltung/transkription#hf"
+    assert api.verwaltung_adresse("../../irgendwohin") == {"ok": False}  # nur feste Ziele
+    assert api.verwaltung_adresse()["adresse"] == "http://localhost:8000/verwaltung/"
 
 
 def test_firewall_regel_nach_neuinstallation_wieder_angeboten(monkeypatch):

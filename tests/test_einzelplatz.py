@@ -257,7 +257,7 @@ def test_oberflaeche_wahl_und_konto(monkeypatch):
     app._worker_koppeln()
     assert (app.e.server, app.e.token, gestartet) == (einzelplatz.ADRESSE, "wk.abc.def", [1])
     # Neu koppeln gibt es im Einzelplatz nicht
-    api.entkoppeln()
+    api.entkoppeln(api._pruefwert)
     assert app.e.token == "wk.abc.def"
     assert api.betrieb_waehlen("verbunden") == {"ok": False}
 
