@@ -1,0 +1,300 @@
+/* Taleward Desktop – ein Fenster: Leiste links (Zustand, Bereiche), rechts die App im Rahmen oder die Bereiche des
+   Programms. Daten über die Brücke (bruecke.js); die App und die Verwaltung laufen in Rahmen ohne Brücke. */
+(function () {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => Array.from(document.querySelectorAll(s));
+  const APP = "http://localhost:8000/app/";
+  const MINDEST_SERVER = [0, 4, 112];
+  const WEBSITE = "https://taleward.org/";
+  const ERINNERN_NACH_S = 14 * 24 * 3600;
+  let api = null, S = null, V = null, sprache = "de", bereich = "kampagnen", appZiel = "#/", letzterLog = "";
+  let adresse = null;
+
+  // ------------------------------------------------------------ Texte
+  function t(k, v) {
+    const d = window.DTEXTE, w = window.TEXTE;
+    let s = [d[sprache], w[sprache], d.de, w.de].map((x) => x && x[k]).find((x) => x !== undefined);
+    if (s === undefined) s = k;
+    if (v) for (const [a, b] of Object.entries(v)) s = s.split("{" + a + "}").join(b);
+    return s;
+  }
+  function uebersetzen() {
+    document.documentElement.lang = sprache;
+    $$("[data-t]").forEach((el) => { el.textContent = t(el.dataset.t); });
+  }
+  function spracheWaehlen() {
+    const eigen = S && S.einstellungen.sprache;
+    const neu = eigen || ((navigator.language || "de").toLowerCase().startsWith("de") ? "de" : "en");
+    if (neu !== sprache) { sprache = neu; uebersetzen(); darstellen(); }
+  }
+  const ort = () => (sprache === "de" ? "de-DE" : "en-GB");
+  const zahl = (n, st = 0) => Number(n).toLocaleString(ort(), { maximumFractionDigits: st, minimumFractionDigits: st });
+  const gb = (mb) => (mb >= 1024 ? zahl(mb / 1024, 1) + " GB" : zahl(mb) + " MB");
+  const datum = (iso) => new Date(iso).toLocaleDateString(ort(), { day: "numeric", month: "short", year: "numeric" });
+  const uhrzeit = (s) => new Date(s * 1000).toLocaleString(ort(), { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  function dauer(s) {
+    if (s == null) return "–";
+    if (s >= 3600) return zahl(s / 3600, 1) + (sprache === "de" ? " Std." : " h");
+    return Math.max(1, Math.round(s / 60)) + " min";
+  }
+  function vor(iso) {
+    const s = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (s < 90) return t("d_gerade_eben");
+    if (s < 3600) return t("d_vor_min", { n: Math.round(s / 60) });
+    if (s < 86400) return t("d_vor_std", { n: Math.round(s / 3600) });
+    if (s < 2 * 86400) return t("d_gestern");
+    return t("d_vor_tagen", { n: Math.floor(s / 86400) });
+  }
+  function toast(text) {
+    const el = $("#toast"); el.textContent = text; el.hidden = false;
+    clearTimeout(toast.z); toast.z = setTimeout(() => { el.hidden = true; }, 3600);
+  }
+  function fassungMindestens(v, mindest) {
+    const teile = String(v || "").split(".").map((x) => parseInt(x, 10) || 0);
+    for (let i = 0; i < mindest.length; i++) {
+      if ((teile[i] || 0) !== mindest[i]) return (teile[i] || 0) > mindest[i];
+    }
+    return true;
+  }
+  function knopf(text, stil, fn) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "tw-btn tw-btn--" + stil; b.textContent = text;
+    b.onclick = async () => { b.disabled = true; try { await fn(); } finally { b.disabled = false; neuLaden(); } };
+    return b;
+  }
+  function knoepfeSetzen(ziel, liste) {
+    const schluessel = liste.map((x) => x[0] + x[1]).join("|") + sprache;
+    if (ziel.dataset.s === schluessel) return;
+    ziel.dataset.s = schluessel;
+    ziel.replaceChildren(...liste.map(([text, stil, fn]) => knopf(text, stil, fn)));
+  }
+
+  // Folgenreiches braucht den Prüfwert aus dem Zustand (gilt für einen Aufruf)
+  async function riskant(name, ...args) {
+    if (!S) await neuLaden();
+    let r = await api[name](S.pruefwert, ...args);
+    if (r && r.fehler === "pruefwert") { await neuLaden(); r = await api[name](S.pruefwert, ...args); }
+    return r;
+  }
+
+  // ------------------------------------------------------------ Bereiche
+  const RAHMEN_APP = ["kampagnen", "schirm"];
+  function bereichZeigen(name, vonSelbst) {
+    const vorher = bereich;
+    bereich = name;
+    $$("[data-bereich]").forEach((b) => {
+      const aktiv = b.dataset.bereich === name || (name === "verwaltung" && b.dataset.bereich === "einstellungen");
+      if (aktiv) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+    });
+    const ansicht = RAHMEN_APP.includes(name) ? "app" : name;
+    $$("[data-ansicht]").forEach((el) => { el.hidden = el.dataset.ansicht !== ansicht; });
+    if (name === "schirm") appNavigieren("#/schirm");
+    else if (name === "kampagnen" && (vorher === "schirm" || vorher === "kampagnen") && !vonSelbst) appNavigieren("#/");
+    if (name === "verwaltung") verwaltungLaden();
+    if (name === "hilfe") logLaden(true);
+    if (name === "einstellungen") speicherLaden();
+    darstellen();
+    if (!vonSelbst && !RAHMEN_APP.includes(name)) { const h = $("[data-ansicht=\"" + ansicht + "\"] h1"); if (h) { h.tabIndex = -1; h.focus(); } }
+  }
+  window.talewardBereich = (name) => bereichZeigen(name, true);
+
+  function appNavigieren(ziel) {
+    appZiel = ziel;
+    const f = $("#rahmen-app");
+    if (!f.getAttribute("src")) return; // wird gesetzt, sobald die App bereitsteht (appZeigen)
+    try { f.contentWindow.location.replace(APP + ziel); } catch (e) { f.src = APP + ziel; }
+  }
+  function appZeigen() {
+    const tw = S.taleward || {}, z = (tw.zustand || {}).art;
+    const hinweis = $("#app-hinweis"), f = $("#rahmen-app");
+    let titel = "", text = "", update = false, browser = false;
+    if (S.serverVersion && !fassungMindestens(S.serverVersion, MINDEST_SERVER)) {
+      titel = t("d_app_alt"); text = t("d_app_alt_text"); update = true; browser = !!tw.app;
+    } else if (z === "fehler") {
+      titel = t("d_app_fehler"); text = t("d_app_fehler_text");
+    } else if (!tw.app || !S.serverVersion) {
+      titel = t("d_app_startet"); text = tw.appFehlt ? t("d_app_fehlt_text") : t("d_app_startet_text");
+    }
+    const zeigen = !!titel && !f.getAttribute("src");
+    hinweis.hidden = !zeigen;
+    if (zeigen) {
+      $("#app-hinweis-titel").textContent = titel; $("#app-hinweis-text").textContent = text;
+      $("#app-hinweis-update").hidden = !update; $("#app-hinweis-browser").hidden = !browser;
+    }
+    // Einmal geladen, bleibt die App, wie sie ist – auch wenn Taleward kurz neu startet (eine laufende Aufnahme im
+    // Rahmen darf nie durch Neuladen abbrechen)
+    if (!titel && !f.getAttribute("src")) f.src = APP + appZiel;
+  }
+  async function verwaltungLaden() {
+    const f = $("#rahmen-verwaltung");
+    const seite = verwaltungLaden.seite || "";
+    verwaltungLaden.seite = "";
+    if (f.getAttribute("src") && !seite) return;
+    const r = await api.verwaltung_adresse(seite);
+    if (r && r.ok) f.src = r.adresse;
+  }
+
+  // ------------------------------------------------------------ Zustand (Leiste und Übersicht)
+  function schrittText(lauf, typ) {
+    const nr = lauf && lauf.chapterNumber;
+    const schritt = (lauf && lauf.step) || ({ transcribe: "transcribing", summarize: "summarizing", revise: "revising",
+      document: "document", voice_enroll: "voice" })[typ] || "transcribing";
+    if (lauf && !lauf.own) return t("d_z_fremd");
+    if (schritt === "document") return t("d_z_unterlage");
+    if (schritt === "voice") return t("d_z_stimme");
+    const k = schritt === "summarizing" ? "d_z_kapitel" : schritt === "revising" ? "d_z_ueberarbeitet" : "d_z_abschrift";
+    return nr ? t(k, { n: nr }) : t(k + "_ohne");
+  }
+  function restText(z) {
+    const p = z.p || 0, seit = z.seit ? Date.now() / 1000 - z.seit : 0;
+    if (p < 0.05 || seit < 60) return seit >= 60 ? t("d_z_laeuft_seit", { min: Math.round(seit / 60) }) : "";
+    const rest = seit * (1 - p) / p;
+    if (rest >= 5400) return t("d_z_rest_std", { std: zahl(rest / 3600, 1) });
+    const min = rest > 15 * 60 ? Math.round(rest / 300) * 5 : Math.max(1, Math.round(rest / 60));
+    return t("d_z_rest", { min });
+  }
+  function netzStand() {
+    const n = (S.taleward && S.taleward.netz) || {};
+    const profile = n.profile || [];
+    return { noetig: !!n.noetig, oeffentlich: profile.includes("Public") && !profile.includes("Private"),
+             ohneRegel: !!n.noetig && n.regel === false, bekannt: n.regel !== undefined };
+  }
+  function zustand() {
+    const tw = S.taleward || {}, z = tw.zustand || {}, d = S.dienst.zustand || {}, upd = tw.update || {};
+    const imUpdate = ["sichern", "tauschen", "starten", "pruefen", "zurueck"].includes(upd.phase);
+    const inst = S.installation, instLaeuft = inst && !["fertig", "fehler", "abgebrochen"].includes(inst.phase);
+    if (imUpdate) return { art: "arbeit", titel: t("d_z_update"), text: t("tw_upd_" + upd.phase, { neu: upd.neu || "", alt: upd.alt || "" }) };
+    if (instLaeuft) return { art: "arbeit", titel: t("d_z_update"), text: t("ph_" + inst.phase), p: inst.anteil };
+    if (z.art === "fehler") return { art: "achtung", titel: t("d_z_hilfe"), text: t("tw_f_" + (z.code || "startet_nicht")), knopf: "neustart" };
+    if (!S.motor && !S.entwicklung) return { art: "achtung", titel: t("d_z_hilfe"), text: t("d_z_programmteile"), knopf: "installieren" };
+    if (["startet", "abgestuerzt", "gestoppt"].includes(z.art) || !z.art) return { art: "arbeit", titel: t("d_z_startet"), text: t("d_z_startet_text") };
+    if (d.art === "fehler" && d.code === "modell") return { art: "achtung", titel: t("d_z_hilfe"), text: t("d_z_stimmen"), knopf: "stimmen" };
+    if (d.art === "fehler") return { art: "achtung", titel: t("d_z_hilfe"), text: d.text || t("f_" + (d.code || "einrichtung")), knopf: "neustart" };
+    if (d.art === "arbeitet") {
+      const lauf = V && V.current;
+      return { art: "arbeit", titel: schrittText(lauf, d.typ), text: restText(d), p: d.p || 0 };
+    }
+    if (S.einstellungen.pausiert || d.art === "pausiert") return { art: "pause", titel: t("d_z_pause"), text: t("d_z_pause_text") };
+    return { art: "ruhe", titel: t("d_z_laeuft"), text: t("d_z_laeuft_text") };
+  }
+  function hinweiseZahl() {
+    const n = netzStand();
+    return (n.oeffentlich ? 1 : 0) + (n.ohneRegel ? 1 : 0) + (zustand().art === "achtung" ? 1 : 0);
+  }
+  function erinnern() {
+    if (!S.einstellungen.sicherung_erinnern || !V) return false;
+    const zuletzt = S.einstellungen.sicherung_zuletzt || 0;
+    if (Date.now() / 1000 - zuletzt < ERINNERN_NACH_S) return false;
+    return (V.recent || []).some((r) => r.step === "transcribing" && r.result === "done" && r.finishedAt
+      && new Date(r.finishedAt).getTime() / 1000 > zuletzt);
+  }
+
+  function leisteZeigen() {
+    const z = zustand();
+    const feld = $("#zustand");
+    feld.dataset.art = z.art;
+    $("#zustand-titel").textContent = z.titel;
+    $("#zustand-neben").textContent = z.text || "";
+    feld.setAttribute("aria-label", z.titel + (z.text ? ". " + z.text : ""));
+    const balken = $("#zustand-balken");
+    balken.hidden = z.p == null;
+    if (z.p != null) balken.firstElementChild.style.width = Math.round(z.p * 100) + "%";
+    const pruefen = (V && V.awaitingReview) || 0, hinweise = hinweiseZahl();
+    zaehler("kampagnen", pruefen, t("d_zaehler_kampagnen", { n: pruefen }));
+    zaehler("uebersicht", hinweise, t("d_zaehler_uebersicht", { n: hinweise }));
+    const upd = (S.taleward && S.taleward.update) || {};
+    const fassung = (S.motor && S.motor.fassung) || S.serverVersion || "";
+    $("#fuss-fassung").textContent = fassung ? t("d_fassung", { fassung }) + " · " + t(upd.angebot ? "d_neue_da" : "d_neueste") : "";
+    document.body.classList.toggle("schmal", !!S.einstellungen.leiste_schmal);
+    const klappe = $("#leiste-klappe");
+    klappe.setAttribute("aria-expanded", String(!S.einstellungen.leiste_schmal));
+    klappe.querySelector(".bereiche__name").textContent = t(S.einstellungen.leiste_schmal ? "d_leiste_ausklappen" : "d_leiste_einklappen");
+    klappe.setAttribute("aria-label", t(S.einstellungen.leiste_schmal ? "d_leiste_ausklappen" : "d_leiste_einklappen"));
+    $$("[data-bereich]").forEach((b) => b.setAttribute("aria-label", b.querySelector(".bereiche__name").textContent
+      + (b.querySelector(".zaehler:not([hidden])") ? ", " + b.querySelector(".zaehler").getAttribute("aria-label") : "")));
+  }
+  function zaehler(name, n, text) {
+    const el = $("[data-zaehler=\"" + name + "\"]");
+    el.hidden = !n; el.textContent = n > 9 ? "9+" : String(n); el.setAttribute("aria-label", text);
+  }
+
+  // ------------------------------------------------------------ Übersicht
+  function uebersichtZeigen() {
+    const z = zustand(), tw = S.taleward || {};
+    $("#ue-zustand").dataset.art = z.art;
+    $("#ue-titel").textContent = z.titel;
+    let text = z.text || "";
+    if (z.art === "ruhe" || z.art === "pause") {
+      text = t("d_laeuft_text", { name: S.einstellungen.anmeldename || "–" });
+      if (tw.zustand && tw.zustand.seit) text += " " + t("d_laeuft_seit", { zeit: uhrzeit(tw.zustand.seit) });
+    }
+    $("#ue-text").textContent = text;
+    const liste = [];
+    if (z.knopf === "neustart") liste.push([t("d_neu_starten"), "primary", () => riskant("taleward_neu_starten")]);
+    if (z.knopf === "installieren") liste.push([t("d_installieren"), "primary", () => riskant("installieren", !!S.einstellungen.testmodus)]);
+    if (z.knopf === "stimmen") liste.push([t("d_einrichten"), "primary", () => { verwaltungLaden.seite = "transkription#hf"; bereichZeigen("verwaltung"); }]);
+    const n = netzStand();
+    if (n.ohneRegel && !liste.length) liste.push([t("d_erlauben"), "primary", erlauben]);
+    knoepfeSetzen($("#ue-knoepfe"), liste);
+    const um = $("#ue-update"), upd = tw.update || {};
+    const hinweis = upd.phase === "zurueckgenommen" ? t("tw_upd_zurueckgenommen", { neu: upd.neu || "", alt: upd.alt || "" })
+      : upd.phase === "fertig" ? t("tw_upd_fertig", { neu: upd.neu || "" }) : "";
+    um.hidden = !hinweis; um.textContent = hinweis;
+    // Handys
+    const zeilen = [];
+    if (!n.noetig) zeilen.push(["ja", t("d_netz_erlaubt"), ""]);
+    else if (!n.bekannt) zeilen.push(["warn", t("d_netz_unbekannt"), ""]);
+    else {
+      zeilen.push(n.oeffentlich ? ["nein", t("d_netz_oeffentlich"), t("d_netz_oeffentlich_text")] : ["ja", t("d_netz_privat"), ""]);
+      zeilen.push(n.ohneRegel ? ["nein", t("d_netz_nicht_erlaubt"), t("d_netz_nicht_erlaubt_text")] : ["ja", t("d_netz_erlaubt"), ""]);
+    }
+    pruefliste($("#ue-handys"), zeilen);
+    $("#ue-adresse-zeile").hidden = !adresse;
+    if (adresse) $("#ue-adresse").textContent = adresse;
+    // Verarbeitung
+    const st = S.dienst.statistik || {};
+    $("#ue-heute").textContent = zahl(st.heute || 0);
+    $("#ue-gesamt").textContent = zahl(st.gesamt || 0);
+    const letzte = V && (V.recent || []).find((r) => r.result === "done");
+    $("#ue-zuletzt").textContent = letzte ? t("d_zuletzt", { was: rundeName(letzte), wann: vor(letzte.finishedAt) }) : t("d_zuletzt_nie");
+    // Kapitel schreiben
+    const test = (S.motor && S.motor.testmodus) || S.einstellungen.testmodus;
+    $("#ue-abschrift").textContent = test ? t("d_abschrift_test") : (S.profil && S.profil.geraet === "cpu") ? t("d_abschrift_cpu") : t("d_abschrift_hier");
+    $("#ue-kapitel").textContent = S.ollama && S.ollama.an ? t("d_kapitel_lokal") : t("d_kapitel_server");
+    // Sicherung
+    const zuletzt = S.einstellungen.sicherung_zuletzt;
+    $("#ue-sicherung").textContent = zuletzt ? t("d_sicherung_am", { datum: datum(zuletzt * 1000) }) : t("d_sicherung_nie");
+    $("#ue-erinnerung").hidden = !erinnern();
+    // Dieser PC
+    const k = S.hardware && S.hardware.grafikkarte;
+    $("#ue-gpu").textContent = k && S.hardware.grafikkarteNutzbar ? k.name + " · " + gb(k.vram_mb) : t("d_keine_grafikkarte");
+    const g = S.einstellungen.vram_grenze_mb;
+    $("#ue-grenze").textContent = !k || !S.hardware.grafikkarteNutzbar ? "–" : g ? gb(g) : t("d_alles");
+    $("#ue-platz").textContent = S.hardware && S.hardware.platzGb != null ? t("d_frei_gb", { gb: zahl(S.hardware.platzGb) }) : "–";
+    $("#ue-autostart").textContent = t(S.autostart ? "d_an" : "d_aus");
+  }
+  function pruefliste(ziel, zeilen) {
+    const schluessel = JSON.stringify(zeilen);
+    if (ziel.dataset.s === schluessel) return;
+    ziel.dataset.s = schluessel;
+    ziel.replaceChildren(...zeilen.map(([ok, titel, wert]) => {
+      const li = document.createElement("li"); li.dataset.ok = ok;
+      const z = document.createElement("span"); z.className = "zeichen"; z.textContent = ok === "ja" ? "✓" : "!"; z.setAttribute("aria-hidden", "true");
+      const ti = document.createElement("span"); ti.className = "titel"; ti.textContent = titel;
+      li.append(z, ti);
+      if (wert) { const w = document.createElement("span"); w.className = "wert"; w.textContent = wert; li.append(w); }
+      return li;
+    }));
+  }
+  async function erlauben() {
+    const r = await riskant("netz_freigeben");
+    if (!r || !r.ok) toast(t("netz_abgelehnt"));
+  }
+  function rundeName(r) {
+    if (!r.own) return t("d_fremd");
+    const teile = [];
+    if (r.chapterNumber) teile.push(t("d_kapitel_nr", { n: r.chapterNumber }));
+    if (r.campaignTitle) teile.push(r.campaignTitle);
+    return teile.join(" · ") || t("d_s_" + (r.step || "other"));
+  }
