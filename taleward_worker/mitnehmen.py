@@ -73,6 +73,11 @@ class Sicherung:
                 return
             self.datei = Path(m.group(1).strip()).name
             self._protokoll(f"Sicherung gespeichert: {self.datei}")
+            try:  # für „zuletzt gesichert“ und die Erinnerung
+                self.app.e.sicherung_zuletzt = time.time()
+                self.app.e.speichern()
+            except Exception:  # noqa: BLE001 – Anzeige ist Beiwerk
+                pass
             self.phase = "fertig"
         except Exception as e:  # noqa: BLE001 – die Oberfläche zeigt den Fehler
             self._protokoll(f"Sicherung nicht gespeichert: {type(e).__name__}")

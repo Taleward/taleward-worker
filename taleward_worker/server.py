@@ -133,6 +133,38 @@ def _json(r: httpx.Response) -> dict:
     return d
 
 
+def verarbeitung(adresse: str, token: str) -> dict | None:
+    """Taleward Desktop: Stand der Verarbeitung (ab Server 0.4.110, nur für den Worker des Programms und nur vom PC).
+    Titel und Kapitelnummer nur für Kampagnen, die das Konto des Programms leitet. Ältere Server: None."""
+    try:
+        with httpx.Client(timeout=httpx.Timeout(5), headers={"User-Agent": f"TalewardWorker/{VERSION}"},
+                          follow_redirects=False) as k:
+            r = k.get(f"{adresse}/worker/v1/overview", headers={"Authorization": f"Bearer {token}"})
+    except httpx.HTTPError:
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        d = r.json()
+    except ValueError:
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def heimnetz_adresse(adresse: str) -> str | None:
+    """Taleward Desktop: Adresse im Heimnetz, die der Server für Einladungen nennt (`publicUrl`, http mit privater
+    Adresse) – für Handys, die den QR-Code nicht lesen."""
+    try:
+        with httpx.Client(timeout=httpx.Timeout(5), follow_redirects=False) as k:
+            r = k.get(f"{adresse}/api/v1/info")
+        wert = r.json().get("publicUrl") if r.status_code == 200 else None
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None
+    if not isinstance(wert, str) or not re.fullmatch(r"http://[0-9.]{7,15}(:[0-9]{1,5})?", wert):
+        return None
+    return wert
+
+
 def konfiguration(adresse: str, token: str) -> dict:
     """Einstellungen für Worker; enthält serverVersion (ab Server 0.4.0)."""
     try:

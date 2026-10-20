@@ -36,6 +36,12 @@ class Einstellungen:
     firewall_gefragt: bool = False  # Einzelplatz: Netzwerk-Freigabe einmal von selbst angeboten
     update_gescheitert: str = ""    # Einzelplatz: Server-Fassung, deren Update zurückgenommen wurde (nicht von selbst wieder)
     hinweis_hintergrund_gezeigt: bool = False
+    # Taleward Desktop
+    sicherung_zuletzt: float = 0.0  # Zeitpunkt der letzten Sicherung (0 = noch nie)
+    sicherung_erinnern: bool = True  # ruhiger Hinweis, wenn nach einer Runde länger nicht gesichert wurde
+    leiste_schmal: bool = False      # Leiste nur mit Symbolen (z. B. am Spielabend)
+    fenster_desktop: list = field(default_factory=list)  # letzte Größe [Breite, Höhe] je Betriebsart
+    fenster_worker: list = field(default_factory=list)
     # Verbindung zu einem Server, beiseitegelegt während „Alles auf diesem PC“ – beim Zurückwechseln wieder da
     verbunden_server: str = ""
     verbunden_token: str = ""

@@ -50,6 +50,7 @@ class ServerDienst:
         self.bereit = threading.Event()
         self.app_bereit = threading.Event()  # die Web-App liegt vor (lädt der Server beim ersten Start von GitHub)
         self.app_fehlt = False
+        self.huelle = ""  # Herkunft der Programmoberfläche: nur sie darf App und Verwaltung im Rahmen zeigen
         self._waechter: threading.Thread | None = None
 
     # ------------------------------------------------------------------ Steuerung
@@ -113,8 +114,11 @@ class ServerDienst:
         })
         # Nichts von außen hereinlassen, was die Betriebsart umstellt
         for name in ("DATABASE_URL", "PUBLIC_URL", "FORWARDED_ALLOW_IPS", "CORS_ORIGINS", "TALEWARD_STARTSCHLUESSEL",
-                     "TALEWARD_STARTSCHLUESSEL_DATEI", "VERWALTUNG_NUR_AUS", "EINRICHTUNG_IM_HEIMNETZ"):
+                     "TALEWARD_STARTSCHLUESSEL_DATEI", "VERWALTUNG_NUR_AUS", "EINRICHTUNG_IM_HEIMNETZ",
+                     "EINZELPLATZ_HUELLE"):
             env.pop(name, None)
+        if self.huelle:
+            env["EINZELPLATZ_HUELLE"] = self.huelle  # Server ab 0.4.112: frame-ancestors genau diese Herkunft
         if self._schluessel:
             env["TALEWARD_STARTSCHLUESSEL_DATEI"] = str(pfade.startschluessel())
         return env
