@@ -1,0 +1,134 @@
+From 98cd39290efd8325ba7d4132d6eb8a8e6e6d72e3 Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 14:33:41 +0200
+Subject: [PATCH 57/58] =?UTF-8?q?Worker:=20Kopplungscode=20beim=20Einf?=
+ =?UTF-8?q?=C3=BCgen=20sicherer=20erkennen?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ taleward_worker/server.py | 23 ++++++++++++++------
+ taleward_worker/ui/app.js | 15 +++++++++----
+ tests/test_worker_0312.py | 44 +++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 72 insertions(+), 10 deletions(-)
+ create mode 100644 tests/test_worker_0312.py
+
+diff --git a/taleward_worker/server.py b/taleward_worker/server.py
+index 5c3e02a..74acd8b 100644
+--- a/taleward_worker/server.py
++++ b/taleward_worker/server.py
+@@ -83,18 +83,29 @@ def pruefen(adresse: str) -> dict:
+ 
+ 
++# Zeichen der Kopplungscodes (ohne 0/O, 1/I) – so trifft z. B. ein Datum wie 2026-10-20 nie
++_Z = "[A-HJ-NP-Za-hj-np-z2-9]"
++_MIT_STRICH = re.compile(rf"(?<![A-Za-z0-9])({_Z}{{4}})\s*-\s*({_Z}{{4}})(?![A-Za-z0-9])")
++_OHNE_STRICH = re.compile(rf"(?<![A-Za-z0-9])({_Z}{{4}})({_Z}{{4}})(?![A-Za-z0-9])")
++_NACH_CODE = re.compile(r"code\W*$", re.I)
++
++
+ def code_finden(text: str) -> str:
+-    """Kopplungscode aus der Eingabe, auch mit Text drumherum oder ohne Strich → „ABCD-EFGH“."""
++    """Kopplungscode aus der Eingabe → „ABCD-EFGH“, auch mit Text drumherum oder ohne Strich. Mehrere Kandidaten: der
++    direkt nach „Code“, sonst der letzte. Längerer Text ohne Code → "" (dann wird nichts gesendet)."""
+     roh = text.strip()
+-    m = re.search(r"(?<![A-Za-z0-9])([A-Za-z0-9]{4})\s*-\s*([A-Za-z0-9]{4})(?![A-Za-z0-9])", roh)
+-    if not m and re.search(r"\s", roh):
+-        m = re.search(r"(?<![A-Za-z0-9])([A-Za-z0-9]{4})([A-Za-z0-9]{4})(?![A-Za-z0-9])", roh)
+-    if m:
++    treffer = list(_MIT_STRICH.finditer(roh)) or (list(_OHNE_STRICH.finditer(roh)) if re.search(r"\s", roh) else [])
++    if treffer:
++        m = next((t for t in treffer if _NACH_CODE.search(roh[:t.start()])), treffer[-1])
+         return f"{m[1]}-{m[2]}".upper()
+     code = re.sub(r"[^A-Z0-9]", "", roh.upper())
+-    return f"{code[:4]}-{code[4:]}" if len(code) == 8 else roh.upper()
++    if len(code) == 8 and len(roh) <= 12:
++        return f"{code[:4]}-{code[4:]}"
++    return "" if len(roh) > 12 else roh.upper()
+ 
+ 
+ def koppeln(adresse: str, code: str, name: str) -> dict:
+     code = code_finden(code)
++    if not code:
++        raise ServerFehler("code_fehlt")
+     try:
+         with _klient() as k:
+diff --git a/taleward_worker/ui/app.js b/taleward_worker/ui/app.js
+index 934a6eb..5862c89 100644
+--- a/taleward_worker/ui/app.js
++++ b/taleward_worker/ui/app.js
+@@ -456,9 +456,16 @@
+   function dialogZu() { const d = $("#dialog"); if (d.open) d.close(); }
+   function codeFormen(text) {
+-    // Eingefügt mit Text drumherum („Kopplungscode: K7QM-2XPA …“): nur den Code nehmen
++    // Eingefügt mit Text drumherum: nur den Code nehmen – den direkt nach „Code“, sonst den letzten (wie der Server-Teil
++    // des Programms). Zeichen wie in den Codes: ohne 0/O und 1/I, darum trifft z. B. ein Datum nie.
+     const roh = String(text || "");
+-    const m = roh.match(/(?:^|[^A-Za-z0-9])([A-Za-z0-9]{4})\s*-\s*([A-Za-z0-9]{4})(?![A-Za-z0-9])/)
+-      || (/\s/.test(roh.trim()) && roh.match(/(?:^|[^A-Za-z0-9])([A-Za-z0-9]{4})([A-Za-z0-9]{4})(?![A-Za-z0-9])/));
+-    if (m) return (m[1] + "-" + m[2]).toUpperCase();
++    const z = "[A-HJ-NP-Za-hj-np-z2-9]";
++    const suche = (muster) => [...roh.matchAll(new RegExp("(?<![A-Za-z0-9])(" + z + "{4})" + muster + "(" + z + "{4})(?![A-Za-z0-9])", "g"))];
++    let treffer = suche("\\s*-\\s*");
++    if (!treffer.length && /\s/.test(roh.trim())) treffer = suche("");
++    if (treffer.length) {
++      const m = treffer.find((t) => /code\W*$/i.test(roh.slice(0, t.index))) || treffer[treffer.length - 1];
++      return (m[1] + "-" + m[2]).toUpperCase();
++    }
++    if (roh.trim().length > 12) return "";  // längerer Text ohne Code: nichts übernehmen
+     // Beim Tippen: Buchstaben und Ziffern, Strich nach dem vierten Zeichen (auch selbst getippt)
+     const v = roh.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+diff --git a/tests/test_worker_0312.py b/tests/test_worker_0312.py
+new file mode 100644
+index 0000000..73db2b8
+--- /dev/null
++++ b/tests/test_worker_0312.py
+@@ -0,0 +1,44 @@
++"""Worker 0.3.12: Beim Einfügen zählt der Code direkt nach „Code“, sonst der letzte; ohne Code wird nichts gesendet."""
++import pytest
++
++from tests.test_worker_0310 import _code_formen
++
++FAELLE = [
++    # Adresse oder Schlüssel davor: nicht das erste Stück nehmen
++    ("Server https://abcd-efgh.example Kopplungscode: K7QM-2XPA", "K7QM-2XPA"),
++    ("wk.ABCD-EFGH.xyz und dann K7QM-2XPA", "K7QM-2XPA"),
++    # direkt nach „Code“ gewinnt, auch wenn danach noch etwas kommt
++    ("Code K7QM-2XPA, gültig bis 21:30, Ersatz WXYZ-RSTU", "K7QM-2XPA"),
++    ("pairing code: k7qm-2xpa (expires soon)", "K7QM-2XPA"),
++    # ein Datum ist nie ein Code (0 und 1 kommen in Codes nicht vor)
++    ("Gültig ab 2026-10-20, Code K7QM-2XPA", "K7QM-2XPA"),
++]
++
++
++@pytest.mark.parametrize("eingabe, code", FAELLE)
++def test_programmoberflaeche_nimmt_den_richtigen_code(eingabe, code):
++    assert _code_formen(eingabe) == [code]
++
++
++@pytest.mark.parametrize("eingabe, code", FAELLE)
++def test_server_teil_nimmt_den_richtigen_code(eingabe, code):
++    from taleward_worker import server
++
++    assert server.code_finden(eingabe) == code
++
++
++def test_laengerer_text_ohne_code_sendet_nichts(monkeypatch):
++    from taleward_worker import server
++
++    text = "Hier steht kein Kopplungscode, nur ein Datum 2026-10-20."
++    assert _code_formen(text) == [""]
++    assert server.code_finden(text) == ""
++    gesendet = []
++    monkeypatch.setattr(server, "_klient", lambda: gesendet.append(1))
++    with pytest.raises(server.ServerFehler) as e:
++        server.koppeln("https://server.example", text, "PC")
++    assert e.value.code == "code_fehlt" and gesendet == []
++
++
++def test_tippen_bleibt_wie_bisher():
++    assert _code_formen("k7", "k7qm", "k7qm-", "k7qm2", "k7qm-2xpa") == ["K7", "K7QM", "K7QM-", "K7QM-2", "K7QM-2XPA"]
+-- 
+2.43.0
