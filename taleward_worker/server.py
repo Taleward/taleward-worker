@@ -82,20 +82,31 @@ def pruefen(adresse: str) -> dict:
     return {"name": daten.get("serverName") or daten.get("name") or "", "apiVersion": daten.get("apiVersion", "")}
 
 
+# Zeichen der Kopplungscodes (ohne 0/O, 1/I) – so trifft z. B. ein Datum wie 2026-10-20 nie
+_Z = "[A-HJ-NP-Za-hj-np-z2-9]"
+_MIT_STRICH = re.compile(rf"(?<![A-Za-z0-9])({_Z}{{4}})\s*-\s*({_Z}{{4}})(?![A-Za-z0-9])")
+_OHNE_STRICH = re.compile(rf"(?<![A-Za-z0-9])({_Z}{{4}})({_Z}{{4}})(?![A-Za-z0-9])")
+_NACH_CODE = re.compile(r"code\W*$", re.I)
+
+
 def code_finden(text: str) -> str:
-    """Kopplungscode aus der Eingabe, auch mit Text drumherum oder ohne Strich → „ABCD-EFGH“."""
+    """Kopplungscode aus der Eingabe → „ABCD-EFGH“, auch mit Text drumherum oder ohne Strich. Mehrere Kandidaten: der
+    direkt nach „Code“, sonst der letzte. Längerer Text ohne Code → "" (dann wird nichts gesendet)."""
     roh = text.strip()
-    m = re.search(r"(?<![A-Za-z0-9])([A-Za-z0-9]{4})\s*-\s*([A-Za-z0-9]{4})(?![A-Za-z0-9])", roh)
-    if not m and re.search(r"\s", roh):
-        m = re.search(r"(?<![A-Za-z0-9])([A-Za-z0-9]{4})([A-Za-z0-9]{4})(?![A-Za-z0-9])", roh)
-    if m:
+    treffer = list(_MIT_STRICH.finditer(roh)) or (list(_OHNE_STRICH.finditer(roh)) if re.search(r"\s", roh) else [])
+    if treffer:
+        m = next((t for t in treffer if _NACH_CODE.search(roh[:t.start()])), treffer[-1])
         return f"{m[1]}-{m[2]}".upper()
     code = re.sub(r"[^A-Z0-9]", "", roh.upper())
-    return f"{code[:4]}-{code[4:]}" if len(code) == 8 else roh.upper()
+    if len(code) == 8 and len(roh) <= 12:
+        return f"{code[:4]}-{code[4:]}"
+    return "" if len(roh) > 12 else roh.upper()
 
 
 def koppeln(adresse: str, code: str, name: str) -> dict:
     code = code_finden(code)
+    if not code:
+        raise ServerFehler("code_fehlt")
     try:
         with _klient() as k:
             r = k.post(f"{adresse}/worker/v1/pair", json={"code": code, "name": name.strip()[:60] or "worker"})

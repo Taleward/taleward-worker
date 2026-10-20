@@ -455,11 +455,18 @@
   function dialogFehler(text) { const f = $("#dialog-fehler"); f.textContent = text; f.hidden = false; }
   function dialogZu() { const d = $("#dialog"); if (d.open) d.close(); }
   function codeFormen(text) {
-    // Eingefügt mit Text drumherum („Kopplungscode: K7QM-2XPA …“): nur den Code nehmen
+    // Eingefügt mit Text drumherum: nur den Code nehmen – den direkt nach „Code“, sonst den letzten (wie der Server-Teil
+    // des Programms). Zeichen wie in den Codes: ohne 0/O und 1/I, darum trifft z. B. ein Datum nie.
     const roh = String(text || "");
-    const m = roh.match(/(?:^|[^A-Za-z0-9])([A-Za-z0-9]{4})\s*-\s*([A-Za-z0-9]{4})(?![A-Za-z0-9])/)
-      || (/\s/.test(roh.trim()) && roh.match(/(?:^|[^A-Za-z0-9])([A-Za-z0-9]{4})([A-Za-z0-9]{4})(?![A-Za-z0-9])/));
-    if (m) return (m[1] + "-" + m[2]).toUpperCase();
+    const z = "[A-HJ-NP-Za-hj-np-z2-9]";
+    const suche = (muster) => [...roh.matchAll(new RegExp("(?<![A-Za-z0-9])(" + z + "{4})" + muster + "(" + z + "{4})(?![A-Za-z0-9])", "g"))];
+    let treffer = suche("\\s*-\\s*");
+    if (!treffer.length && /\s/.test(roh.trim())) treffer = suche("");
+    if (treffer.length) {
+      const m = treffer.find((t) => /code\W*$/i.test(roh.slice(0, t.index))) || treffer[treffer.length - 1];
+      return (m[1] + "-" + m[2]).toUpperCase();
+    }
+    if (roh.trim().length > 12) return "";  // längerer Text ohne Code: nichts übernehmen
     // Beim Tippen: Buchstaben und Ziffern, Strich nach dem vierten Zeichen (auch selbst getippt)
     const v = roh.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
     if (v.length > 4) return v.slice(0, 4) + "-" + v.slice(4);
