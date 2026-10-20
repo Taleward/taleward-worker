@@ -1,0 +1,120 @@
+From 53e4e34f814b89b8787b46801a7d22cfba34b1b3 Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 22:34:20 +0200
+Subject: [PATCH] Worker 0.3.17
+
+---
+ pyproject.toml              |  2 +-
+ taleward_worker/__init__.py |  2 +-
+ taleward_worker/ui/app.css  | 13 +++++++------
+ tests/test_worker_0317.py   | 16 ++++++++++++++++
+ uv.lock                     |  2 +-
+ 5 files changed, 26 insertions(+), 9 deletions(-)
+ create mode 100644 tests/test_worker_0317.py
+
+diff --git a/pyproject.toml b/pyproject.toml
+index f19d81b..8d55255 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-worker"
+-version = "0.3.16"
++version = "0.3.17"
+ description = "Taleward Worker – verarbeitet Aufnahmen für einen Taleward-Server auf dem eigenen PC mit Grafikkarte"
+ license = "AGPL-3.0-only"
+diff --git a/taleward_worker/__init__.py b/taleward_worker/__init__.py
+index 71696ec..2e5c775 100644
+--- a/taleward_worker/__init__.py
++++ b/taleward_worker/__init__.py
+@@ -4,5 +4,5 @@ Die App selbst ist klein. Das KI-Paket (Taleward-Server mit WhisperX, einige GB)
+ passender Fassung zum verbundenen Server und startet es als Unterprozess („chronik worker --app“).
+ """
+-VERSION = "0.3.16"
++VERSION = "0.3.17"
+ REPO = "Taleward/taleward-server"        # Server-Code = KI-Paket (engine-requirements.txt, Tags v…)
+ APP_REPO = "Taleward/taleward-worker"   # diese App
+diff --git a/taleward_worker/ui/app.css b/taleward_worker/ui/app.css
+index 845fa0b..e35b0f5 100644
+--- a/taleward_worker/ui/app.css
++++ b/taleward_worker/ui/app.css
+@@ -6,5 +6,6 @@
+   --siegel-soft:#F3DCDC; --siegel-text:#9e2a3a; --messing:#c49235; --messing-soft:#F4E6C6; --salbei:#3d6a48;
+   --salbei-soft:#DDE8D8; --focus-ring:var(--siegel); --akzent-text:var(--tinte);
+-  --shadow-card:0 1px 0 rgba(42,33,24,0.08), 0 6px 18px -10px rgba(42,33,24,0.35);
++  /* Flach wie App und Verwaltung: ruhende Karten ohne Schatten; nur was schwebt (Rückfragen, Hinweise) hat einen */
++  --shadow-card:0 0 #0000; --shadow-float:0 1px 0 rgba(42,33,24,0.08), 0 6px 18px -10px rgba(42,33,24,0.35);
+   --font-serif:"Alegreya", Georgia, "Times New Roman", serif;
+   --font-sans:"Alegreya Sans", system-ui, "Segoe UI", sans-serif;
+@@ -18,5 +19,5 @@
+     --siegel-soft:#3b1c23; --siegel-text:#ec8a9a; --messing:#d9ad55; --messing-soft:#3a3120; --salbei:#8cc096;
+     --salbei-soft:#1f3326; --akzent-text:var(--ink);
+-    --shadow-card:0 1px 0 rgba(0,0,0,0.45), 0 8px 20px -10px rgba(0,0,0,0.7); color-scheme:dark;
++    --shadow-card:0 0 #0000; --shadow-float:0 1px 0 rgba(0,0,0,0.45), 0 8px 20px -10px rgba(0,0,0,0.7); color-scheme:dark;
+   }
+ }
+@@ -54,5 +55,5 @@ main { flex:1; overflow:auto; padding:22px 20px 28px; }
+ 
+ /* Karten und Knöpfe */
+-.karte { background:var(--paper-raised); border-radius:var(--radius-md); box-shadow:var(--shadow-card); padding:20px;
++.karte { background:var(--paper-raised); border:1px solid var(--line); border-radius:var(--radius-md); box-shadow:var(--shadow-card); padding:20px;
+   margin-bottom:16px; }
+ .tw-btn { font:700 15px/22px var(--font-sans); border-radius:var(--radius-md); padding:9px 18px; border:1.5px solid transparent;
+@@ -142,5 +143,5 @@ main { flex:1; overflow:auto; padding:22px 20px 28px; }
+ 
+ .zahlen { display:grid; grid-template-columns:repeat(2, 1fr); gap:12px; margin-bottom:16px; }
+-.zahl { background:var(--paper-raised); border-radius:var(--radius-md); box-shadow:var(--shadow-card); padding:14px 16px; min-width:0; }
++.zahl { background:var(--paper-raised); border:1px solid var(--line); border-radius:var(--radius-md); box-shadow:var(--shadow-card); padding:14px 16px; min-width:0; }
+ .zahl__wert { font:800 30px/34px var(--font-serif); color:var(--akzent-text); font-variant-numeric:lining-nums tabular-nums; }
+ .zahl__wert--text { font:700 17px/24px var(--font-sans); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-top:6px; }
+@@ -185,5 +186,5 @@ main { flex:1; overflow:auto; padding:22px 20px 28px; }
+ .fuss button { font-size:13px; }
+ .toast { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:var(--tinte); color:var(--on-tinte);
+-  padding:10px 16px; border-radius:var(--radius-md); box-shadow:var(--shadow-card); font-size:15px; max-width:90vw; }
++  padding:10px 16px; border-radius:var(--radius-md); box-shadow:var(--shadow-float); font-size:15px; max-width:90vw; }
+ .notizen { white-space:pre-line; font-size:14px; margin:6px 0 0; }
+ .meldung > span { display:block; }
+@@ -198,5 +199,5 @@ main { flex:1; overflow:auto; padding:22px 20px 28px; }
+ /* Rückfragen (Betriebsart, Sicherung, Hilfe-Datei) */
+ .dialog { border:none; border-radius:var(--radius-md); background:var(--paper-raised); color:var(--ink); padding:20px;
+-  width:min(540px, calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow:auto; box-shadow:var(--shadow-card); }
++  width:min(540px, calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow:auto; box-shadow:var(--shadow-float); }
+ .dialog::backdrop { background:rgba(12,21,24,.55); }
+ .dialog .knopfreihe { margin-top:8px; }
+diff --git a/tests/test_worker_0317.py b/tests/test_worker_0317.py
+new file mode 100644
+index 0000000..f9966fa
+--- /dev/null
++++ b/tests/test_worker_0317.py
+@@ -0,0 +1,16 @@
++"""Worker 0.3.17: flach wie App und Verwaltung – ruhende Karten ohne Schatten, nur Schwebendes (Rückfragen, Hinweise)
++behält einen."""
++import re
++from pathlib import Path
++
++UI = Path(__file__).resolve().parents[1] / "taleward_worker" / "ui"
++
++
++def test_karten_ohne_schatten():
++    css = (UI / "app.css").read_text(encoding="utf-8")
++    assert css.count("--shadow-card:0 0 #0000;") == 2  # hell und dunkel
++    for regel in (".karte {", ".zahl {"):
++        block = css[css.index(regel):css.index("}", css.index(regel))]
++        assert "border:1px solid var(--line)" in block and "var(--shadow-card)" in block
++    assert re.search(r"\.dialog \{[^}]*box-shadow:var\(--shadow-float\)", css)
++    assert re.search(r"\.toast \{[^}]*box-shadow:var\(--shadow-float\)", css)
+diff --git a/uv.lock b/uv.lock
+index 73568ac..121d1d6 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -677,5 +677,5 @@ wheels = [
+ [[package]]
+ name = "taleward-worker"
+-version = "0.3.16"
++version = "0.3.17"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
