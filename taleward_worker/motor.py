@@ -673,7 +673,7 @@ def anforderungen_aufteilen(text: str) -> tuple[str, str]:
 # Kommen in der Variante für die Grafikkarte vom PyTorch-Verzeichnis – dafür stehen keine Prüfsummen in uv.lock
 PYTORCH_VERZEICHNIS = ("torch", "torchaudio", "torchvision")
 # Nur für die Grafikkarte unter Linux nötig (bringt PyTorch von PyPI mit), bei „nur Prozessor“ weglassen
-NUR_CUDA = ("nvidia-", "triton")
+NUR_CUDA = ("nvidia-", "triton", "cuda-")
 # Ältere Server-Fassungen hatten imageio-ffmpeg nicht in uv.lock (wurde ohne feste Fassung nachinstalliert)
 IMAGEIO_FFMPEG = """imageio-ffmpeg==0.6.0 \\
     --hash=sha256:02fa47c83703c37df6bfe4896aab339013f62bf02c5ebf2dce6da56af04ffc0a \\
