@@ -1,0 +1,136 @@
+/* Taleward Desktop – ein Fenster, Leiste links, Inhalt rechts. Farben und Schriften aus app.css (Tokens wie App und
+   Verwaltung); hier nur der Aufbau. Siegel nur für Lesebändchen, Zähler und Achtung; Messing nur als Fläche. */
+body.d { display:grid; grid-template-columns:248px minmax(0, 1fr); height:100vh; overflow:hidden; }
+body.d.schmal { grid-template-columns:72px minmax(0, 1fr); }
+.d .tw-btn { min-height:48px; }
+.d .tw-btn--quiet { min-height:48px; }
+.unsichtbar { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.sprung { position:absolute; left:-9999px; top:8px; z-index:10; background:var(--paper-raised); color:var(--ink); padding:12px 16px;
+  border-radius:var(--radius-md); }
+.sprung:focus { left:8px; }
+
+/* Leiste */
+.leiste { background:var(--tinte); color:var(--on-tinte); display:flex; flex-direction:column; min-height:0; overflow-y:auto;
+  background-image:radial-gradient(140% 60% at 100% 0%, rgba(196,146,53,.14), transparent 60%); }
+.leiste__kopf { padding:20px 20px 12px; }
+.leiste__marke { height:28px; width:auto; display:block; }
+.leiste__zeichen { height:30px; width:30px; display:none; margin:0 auto; }
+.zustand { all:unset; box-sizing:border-box; cursor:pointer; margin:4px 12px 14px; padding:12px 14px; border-radius:var(--radius-md);
+  background:rgba(255,255,255,.07); display:grid; grid-template-columns:14px 1fr; gap:4px 10px; align-items:start; min-height:48px; }
+.zustand:hover { background:rgba(255,255,255,.11); }
+.zustand:focus-visible { outline:2px solid var(--messing); outline-offset:2px; }
+.zustand__punkt { width:12px; height:12px; border-radius:50%; margin-top:6px; background:var(--line-strong);
+  box-shadow:0 0 0 3px rgba(255,255,255,.12); }
+[data-art="ruhe"] .zustand__punkt { background:var(--salbei); }
+[data-art="arbeit"] .zustand__punkt { background:var(--messing); }
+[data-art="achtung"] .zustand__punkt { background:var(--siegel); }
+[data-art="pause"] .zustand__punkt { background:var(--line-strong); }
+.leiste [data-art="ruhe"] .zustand__punkt { background:#8cc096; }
+.zustand__text strong { display:block; font:700 15px/21px var(--font-sans); }
+.zustand__text span { display:block; font:400 13px/18px var(--font-sans); color:rgba(243,243,238,.84); }
+.zustand__balken { grid-column:1 / -1; height:6px; border-radius:var(--radius-pill); background:rgba(255,255,255,.14); overflow:hidden; margin-top:6px; }
+.zustand__balken > span { display:block; height:100%; width:0; background:var(--messing); border-radius:inherit; transition:width .6s ease; }
+
+.bereiche { display:flex; flex-direction:column; gap:2px; padding:0 8px; }
+.bereiche button { all:unset; box-sizing:border-box; position:relative; display:flex; align-items:center; gap:12px; min-height:48px;
+  padding:0 12px 0 16px; border-radius:var(--radius-md); cursor:pointer; color:var(--on-tinte); font:500 16px/22px var(--font-sans); }
+.bereiche button:hover { background:rgba(255,255,255,.08); }
+.bereiche button:focus-visible, .leiste__klappe:focus-visible { outline:2px solid var(--messing); outline-offset:-2px; }
+.bereiche button[aria-current="page"] { background:rgba(255,255,255,.13); font-weight:700; }
+/* Lesebändchen am aktiven Bereich */
+.bereiche button[aria-current="page"]::before { content:""; position:absolute; left:2px; top:8px; width:6px; height:32px;
+  background:var(--siegel); clip-path:polygon(0 0, 100% 0, 100% 100%, 50% 80%, 0 100%); }
+.bereiche svg, .leiste__klappe svg { width:22px; height:22px; flex:none; }
+.bereiche__name { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.zaehler { min-width:22px; height:22px; padding:0 6px; border-radius:var(--radius-pill); background:var(--siegel); color:var(--on-siegel);
+  font:700 13px/22px var(--font-sans); text-align:center; font-variant-numeric:lining-nums tabular-nums; }
+.leiste__fuss { margin-top:auto; padding:16px 12px 14px; display:grid; gap:8px; }
+.leiste__fassung { margin:0 8px; font:400 13px/18px var(--font-sans); color:rgba(243,243,238,.84); display:grid; }
+.leiste__fassung span:first-child { font-weight:700; color:var(--on-tinte); }
+.leiste__klappe { all:unset; box-sizing:border-box; display:flex; align-items:center; gap:12px; min-height:48px; padding:0 12px 0 16px;
+  border-radius:var(--radius-md); cursor:pointer; color:rgba(243,243,238,.9); font:500 14px/20px var(--font-sans); }
+.leiste__klappe:hover { background:rgba(255,255,255,.08); }
+
+/* Leiste nur mit Symbolen: eingeklappt oder schmales Fenster */
+body.d.schmal .leiste__marke, body.d.schmal .bereiche__name, body.d.schmal .zustand__text, body.d.schmal .leiste__fassung,
+body.d.schmal .zustand__balken { display:none; }
+body.d.schmal .leiste__zeichen { display:block; }
+body.d.schmal .leiste__kopf { padding:18px 0 10px; }
+body.d.schmal .zustand { grid-template-columns:1fr; justify-items:center; margin:4px 10px 14px; padding:16px 0; }
+body.d.schmal .zustand__punkt { margin:0; }
+body.d.schmal .bereiche button, body.d.schmal .leiste__klappe { justify-content:center; padding:0; }
+body.d.schmal .zaehler { position:absolute; top:4px; right:6px; min-width:18px; height:18px; font-size:11px; line-height:18px; padding:0 4px; }
+body.d.schmal .leiste__klappe svg { transform:rotate(180deg); }
+@media (max-width: 960px) {
+  body.d { grid-template-columns:72px minmax(0, 1fr); }
+  body.d .leiste__marke, body.d .bereiche__name, body.d .zustand__text, body.d .leiste__fassung, body.d .zustand__balken,
+  body.d .leiste__klappe { display:none; }
+  body.d .leiste__zeichen { display:block; }
+  body.d .leiste__kopf { padding:18px 0 10px; }
+  body.d .zustand { grid-template-columns:1fr; justify-items:center; margin:4px 10px 14px; padding:16px 0; }
+  body.d .zustand__punkt { margin:0; }
+  body.d .bereiche button { justify-content:center; padding:0; }
+  body.d .zaehler { position:absolute; top:4px; right:6px; min-width:18px; height:18px; font-size:11px; line-height:18px; padding:0 4px; }
+}
+
+/* Inhalt */
+.inhalt { position:relative; min-width:0; min-height:0; overflow:hidden; padding:0; background:var(--paper); }
+.inhalt:focus { outline:none; }
+.bereich { position:absolute; inset:0; overflow-y:auto; padding:28px 32px 40px; }
+.bereich > * { max-width:980px; margin-left:auto; margin-right:auto; }
+.bereich > h1 { margin-bottom:18px; }
+.raster { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:16px; }
+.raster .karte { margin:0; }
+.gross { margin-bottom:16px; }
+.gross__kopf { display:grid; grid-template-columns:auto 1fr; gap:16px; align-items:start; }
+.gross__punkt { width:16px; height:16px; margin-top:10px; box-shadow:0 0 0 4px var(--paper-sunken); }
+.gross__titel { font:700 26px/32px var(--font-serif); margin:0 0 4px; }
+.gross .knopfreihe:empty { display:none; }
+.adresse { font:700 18px/26px ui-monospace, "Cascadia Mono", Consolas, monospace; margin:6px 0 0; }
+.waehlbar { user-select:text; }
+.erinnerung { display:flex; gap:10px; align-items:flex-start; background:var(--paper-sunken); border-radius:var(--radius-md); padding:12px 14px;
+  margin:0 0 14px; font-size:15px; line-height:22px; }
+.erinnerung svg { width:22px; height:22px; flex:none; color:var(--ink-muted); margin-top:1px; }
+.aufklapp > summary { cursor:pointer; min-height:48px; display:flex; align-items:center; gap:8px; font-weight:700; list-style:none; }
+.aufklapp > summary::-webkit-details-marker { display:none; }
+.aufklapp > summary::before { content:""; width:8px; height:8px; border-right:2px solid var(--ink-muted); border-bottom:2px solid var(--ink-muted);
+  transform:rotate(-45deg); transition:transform .15s; flex:none; margin-right:4px; }
+.aufklapp[open] > summary::before { transform:rotate(45deg); }
+.aufklapp > summary h2 { margin:0; }
+.aufklapp > summary:focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; border-radius:var(--radius-sm); }
+.karte .aufklapp { border-bottom:1px solid var(--line); }
+.karte .aufklapp:last-child { border-bottom:none; }
+.karte .aufklapp > p { margin:0 0 14px 20px; }
+.d .schalter input { inset:-10px -4px; }
+.d .zeile select { min-height:48px; }
+.d .log { height:320px; min-height:200px; }
+.d .regler input[type=range] { accent-color:var(--messing); }
+.d .knopfreihe:not(:has(> :not([hidden]))) { display:none; }
+
+/* Verarbeitung */
+.vb-titel { font:700 22px/28px var(--font-serif); margin:0 0 2px; }
+.stufen { list-style:none; display:flex; gap:8px; padding:0; margin:16px 0 4px; counter-reset:stufe; }
+.stufen li { flex:1; display:flex; flex-direction:column; gap:6px; font:500 13px/18px var(--font-sans); color:var(--ink-muted); counter-increment:stufe; }
+.stufen li::before { content:counter(stufe) "  "; height:4px; border-radius:2px; background:var(--line); font-size:0; }
+.stufen li[data-stand="aktiv"] { color:var(--ink); font-weight:700; }
+.stufen li[data-stand="aktiv"]::before { background:var(--messing); }
+.stufen li[data-stand="fertig"]::before { background:var(--salbei); }
+.d .balken > span { background:var(--messing); }
+.tabelle-huelle { overflow-x:auto; }
+.tabelle { width:100%; border-collapse:collapse; font-size:15px; line-height:21px; }
+.tabelle th { text-align:left; font:500 13px/18px var(--font-sans); color:var(--ink-muted); padding:8px 10px; border-bottom:1.5px solid var(--line); }
+.tabelle td { padding:10px; border-bottom:1px solid var(--line); vertical-align:top; font-variant-numeric:lining-nums tabular-nums; }
+.tabelle tr:last-child td { border-bottom:none; }
+.ergebnis--fehler { color:var(--siegel-text); font-weight:700; }
+
+/* Rahmen für App und Verwaltung */
+.rahmen { position:absolute; inset:0; display:flex; flex-direction:column; }
+.rahmen iframe { flex:1; width:100%; border:0; display:block; background:var(--paper); }
+.rahmen__kopf { display:flex; align-items:center; gap:12px; padding:0 16px; min-height:56px; border-bottom:1px solid var(--line);
+  background:var(--paper-raised); }
+.rahmen__hinweis { position:absolute; inset:0; overflow:auto; padding:48px 32px; background:var(--paper); z-index:1; }
+.rahmen__hinweis .karte { max-width:620px; margin:0 auto; }
+
+.d .toast { left:calc(50% + 124px); }
+body.d.schmal .toast { left:calc(50% + 36px); }
+@media (prefers-reduced-motion: reduce) { .zustand__balken > span, .d .balken > span, .aufklapp > summary::before { transition:none; } }
