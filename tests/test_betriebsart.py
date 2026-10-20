@@ -96,3 +96,54 @@ def test_alles_auf_diesem_pc_installiert_nie_eine_zu_alte_fassung(monkeypatch):
     monkeypatch.setattr(motor, "Installation", Inst)
     app.installieren(False)
     assert erzeugt == [("", True)]
+
+
+def test_verbindung_zum_server_bleibt_ueber_den_wechsel_erhalten(monkeypatch):
+    """Server → Alles auf diesem PC → Server: kein neuer Kopplungscode nötig."""
+    from taleward_worker import mitnehmen, motor
+    from taleward_worker.einstellungen import Einstellungen
+
+    app, api = _app(monkeypatch, betrieb="verbunden", server="https://verein.invalid", token="wk.1.geheim",
+                    unsicher=False)
+    app.server_name = "Spielgruppe Nordlicht"
+    monkeypatch.setattr(app.dienst, "stoppen", lambda *a, **k: None)
+    monkeypatch.setattr(app, "taleward_starten", lambda: None)
+    monkeypatch.setattr(motor, "installiert", lambda: {"fassung": "0.4.104"})
+
+    app.betrieb_wechseln("einzelplatz")
+    assert app.e.einzelplatz and app.e.token == ""
+    assert (app.e.verbunden_server, app.e.verbunden_token, app.e.verbunden_name) == (
+        "https://verein.invalid", "wk.1.geheim", "Spielgruppe Nordlicht")
+    # Taleward auf diesem PC koppelt seinen eigenen Worker – die beiseitegelegte Verbindung bleibt
+    app.e.server, app.e.token = "http://127.0.0.1:8000", "wk.lokal"
+    app.e.speichern()
+
+    # übersteht einen Neustart des Programms, Schlüssel nie in Oberfläche oder Hilfe-Datei
+    geladen = Einstellungen.laden()
+    assert geladen.verbunden_token == "wk.1.geheim"
+    sicht = geladen.fuer_oberflaeche()
+    assert "verbunden_token" not in sicht and sicht["verbundenGemerkt"] is True
+    assert "wk.1.geheim" not in str(sicht)
+    assert "wk.1.geheim" not in mitnehmen.hilfe_text(app)
+
+    geprueft = []
+    monkeypatch.setattr(app, "_motor_pruefen", lambda erster: geprueft.append(erster))
+    app.betrieb_wechseln("verbunden")
+    assert (app.e.art, app.e.server, app.e.token, app.e.gekoppelt) == (
+        "verbunden", "https://verein.invalid", "wk.1.geheim", True)
+    assert not app.e.verbunden_server and not app.e.verbunden_token
+    assert geprueft == [True]  # Worker startet von selbst wieder
+
+
+def test_ohne_frühere_verbindung_geht_es_mit_kopplungscode_weiter(monkeypatch):
+    app, api = _app(monkeypatch, betrieb="einzelplatz", server="http://127.0.0.1:8000", token="wk.lokal")
+    monkeypatch.setattr(app.dienst, "stoppen", lambda *a, **k: None)
+    monkeypatch.setattr(app.server, "stoppen", lambda *a, **k: None)
+    app.betrieb_wechseln("verbunden")
+    assert (app.e.server, app.e.token, app.e.gekoppelt) == ("", "", False)
+
+
+def test_eigener_worker_wird_nie_als_server_verbindung_gemerkt(monkeypatch):
+    app, api = _app(monkeypatch, betrieb="einzelplatz", server="http://127.0.0.1:8000", token="wk.lokal")
+    assert app.e.verbindung_merken("x") is False
+    assert not app.e.verbunden_token

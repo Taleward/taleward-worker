@@ -400,18 +400,30 @@ class WorkerApp:
 
     def betrieb_wechseln(self, ziel: str, regel_entfernen: bool = False) -> None:
         """Anhalten, was zur bisherigen Betriebsart gehört, und in die neue wechseln. Zu „Mit einem Server
-        verbinden“ geht es mit Adresse und Kopplungscode weiter; zu „Alles auf diesem PC“ startet Taleward hier
-        (beim ersten Mal mit Konto anlegen, sonst mit den Kampagnen von vorher)."""
+        verbinden“ geht es mit der Verbindung von vorher weiter (sonst mit Adresse und Kopplungscode); zu „Alles auf
+        diesem PC“ startet Taleward hier (beim ersten Mal mit Konto anlegen, sonst mit den Kampagnen von vorher)."""
         self.dienst.stoppen()
         if self._server is not None:
             self._server.stoppen()
-        self.e.token, self.e.betrieb = "", ziel
-        if ziel == "verbunden":
-            self.e.server = ""
+        zurueck = False
+        if ziel == "einzelplatz":
+            self.e.verbindung_merken(self.server_name or "")
+            self.e.token = ""
+        else:
+            zurueck = self.e.verbindung_zurueckholen()
+            if not zurueck:
+                self.e.server, self.e.token = "", ""
+        self.e.betrieb = ziel
         self.e.speichern()
         self.server_version = self.server_name = None
         self.dienst.protokoll.schreiben("Betriebsart gewechselt: " + (
             "Alles auf diesem PC" if ziel == "einzelplatz" else "Mit einem Server verbinden"))
+        if zurueck:
+            self.dienst.protokoll.schreiben("Verbindung zum Server von vorher wieder eingesetzt")
+            try:
+                self._motor_pruefen(erster=True)  # passende Fassung prüfen, Worker starten
+            except Exception:  # noqa: BLE001 – startet sonst mit der nächsten Pflege
+                log.exception("Worker nach dem Zurückwechseln nicht gestartet")
         if regel_entfernen:
             entfernt = netzfreigabe.entfernen()
             self.dienst.protokoll.schreiben("Netzwerk-Freigabe entfernt" if entfernt

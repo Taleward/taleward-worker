@@ -36,6 +36,28 @@ class Einstellungen:
     firewall_gefragt: bool = False  # Einzelplatz: Netzwerk-Freigabe einmal von selbst angeboten
     update_gescheitert: str = ""    # Einzelplatz: Server-Fassung, deren Update zurückgenommen wurde (nicht von selbst wieder)
     hinweis_hintergrund_gezeigt: bool = False
+    # Verbindung zu einem Server, beiseitegelegt während „Alles auf diesem PC“ – beim Zurückwechseln wieder da
+    verbunden_server: str = ""
+    verbunden_token: str = ""
+    verbunden_unsicher: bool = False
+    verbunden_name: str = ""        # Name des Servers zum Anzeigen
+
+    def verbindung_merken(self, servername: str = "") -> bool:
+        """Vor dem Wechsel zu „Alles auf diesem PC“: die bestehende Server-Verbindung beiseitelegen."""
+        if self.art != "verbunden" or not self.gekoppelt:
+            return False
+        self.verbunden_server, self.verbunden_token = self.server, self.token
+        self.verbunden_unsicher, self.verbunden_name = self.unsicher, servername or ""
+        return True
+
+    def verbindung_zurueckholen(self) -> bool:
+        """Beim Wechsel zu „Mit einem Server verbinden“: die beiseitegelegte Verbindung wieder einsetzen."""
+        if not (self.verbunden_server and self.verbunden_token):
+            return False
+        self.server, self.token, self.unsicher = self.verbunden_server, self.verbunden_token, self.verbunden_unsicher
+        self.verbunden_server = self.verbunden_token = self.verbunden_name = ""
+        self.verbunden_unsicher = False
+        return True
 
     @property
     def gekoppelt(self) -> bool:
@@ -60,6 +82,7 @@ class Einstellungen:
         tmp = ziel.with_suffix(".tmp")
         daten = asdict(self)
         daten["token"] = geschuetzt.text_schuetzen(self.token)
+        daten["verbunden_token"] = geschuetzt.text_schuetzen(self.verbunden_token) if self.verbunden_token else ""
         with tmp.open("w", encoding="utf-8") as f:
             f.write(json.dumps(daten, indent=2, ensure_ascii=False))
             f.flush()
@@ -84,12 +107,15 @@ class Einstellungen:
                 bekannt = {f.name for f in fields(cls)}
                 e = cls(**{k: v for k, v in daten.items() if k in bekannt})
                 e.token = geschuetzt.text_oeffnen(str(e.token or ""))
+                e.verbunden_token = geschuetzt.text_oeffnen(str(e.verbunden_token or ""))
                 return e
         return cls()
 
     def fuer_oberflaeche(self) -> dict:
         d = asdict(self)
         d.pop("token")
+        d.pop("verbunden_token")
+        d["verbundenGemerkt"] = bool(self.verbunden_server and self.verbunden_token)
         d["gekoppelt"] = self.gekoppelt
         d["art"] = self.art
         return d

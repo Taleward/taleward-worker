@@ -475,7 +475,10 @@
       $("#betrieb-frage").textContent = S.einstellungen.gekoppelt ? t("betrieb_zu_einzelplatz", { server: serverName() }) : t("betrieb_zu_einzelplatz_ohne");
       $("#betrieb-folge").textContent = S.einstellungen.gekoppelt ? t("betrieb_zu_einzelplatz_folge", { server: serverName() }) : "";
     } else {
-      $("#betrieb-frage").textContent = t("betrieb_zu_verbunden");
+      const e = S.einstellungen;
+      $("#betrieb-frage").textContent = e.verbundenGemerkt
+        ? t("betrieb_zu_verbunden_gemerkt", { server: e.verbunden_name || e.verbunden_server })
+        : t("betrieb_zu_verbunden");
       $("#betrieb-folge").textContent = t("betrieb_zu_verbunden_folge");
     }
     const netz = (S.taleward && S.taleward.netz) || {};

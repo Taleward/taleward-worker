@@ -208,7 +208,8 @@ def hilfe_text(app) -> str:
         f"Arbeitsspeicher: {hw.get('ramGb') or '–'} GB · frei auf dem Datenträger: {hw.get('platzGb') or '–'} GB",
         "",
         "== Einstellungen",
-        f"Betriebsart: {e.art or '–'} · Gekoppelt: {'ja' if e.gekoppelt else 'nein'}",
+        f"Betriebsart: {e.art or '–'} · Gekoppelt: {'ja' if e.gekoppelt else 'nein'}"
+        f" · Server-Verbindung beiseitegelegt: {'ja' if e.verbunden_server and e.verbunden_token else 'nein'}",
         f"Testmodus: {e.testmodus} · Gerät: {e.geraet} · Modell: {e.modell} · Grafikspeicher-Grenze: {e.vram_grenze_mb}",
         f"Recaps auf diesem PC: {e.recaps_lokal} · Pausiert: {e.pausiert} · Automatische Updates: {e.auto_update}",
         f"Zustand des Workers: {app.dienst.zustand.get('art')} {app.dienst.zustand.get('code') or ''}".rstrip(),
