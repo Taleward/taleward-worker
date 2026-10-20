@@ -1,9 +1,14 @@
-"""Fenster (pywebview) und Symbol im Infobereich (pystray). Die Oberfläche selbst ist HTML (ui/), sie ruft die
-Methoden von ``Api`` auf und fragt den Zustand zweimal pro Sekunde ab."""
+"""Fenster (pywebview) und Symbol im Infobereich (pystray). Die Oberfläche selbst ist HTML (ui/), ausgeliefert von
+huelle.py; sie ruft die Methoden von ``Api`` auf und fragt den Zustand zweimal pro Sekunde ab.
+
+Ein Fenster, zwei Ansichten: „Taleward Desktop“ (Alles auf diesem PC, großes Fenster mit Leiste, `desktop.html`) und
+„Taleward Worker“ (Mit einem Server verbinden und die Einrichtung, kleines Fenster, `index.html`)."""
 from __future__ import annotations
 
+import json
 import logging
 import os
+import secrets
 import subprocess
 import sys
 import threading
@@ -11,8 +16,8 @@ import time
 import webbrowser
 from pathlib import Path
 
-from taleward_worker import (VERSION, autostart, einzelplatz, fenster, hardware, mitnehmen, motor, netzfreigabe,
-                             ollama, pfade, selbstupdate, server, serverupdate)
+from taleward_worker import (VERSION, autostart, einzelplatz, fenster, hardware, huelle, mitnehmen, motor,
+                             netzfreigabe, ollama, pfade, selbstupdate, server, serverupdate)
 from taleward_worker.dienst import Dienst
 from taleward_worker.einstellungen import Einstellungen
 
@@ -21,10 +26,24 @@ UPDATE_PRUEFEN_ALLE = 6 * 3600
 
 
 class Api:
-    """Alles, was die Oberfläche aufrufen darf. Rückgaben sind JSON-fähig."""
+    """Alles, was die Oberfläche aufrufen darf (und nur das: die Brücke nimmt keine anderen Namen an, siehe
+    fenster.bruecke_absichern). Rückgaben sind JSON-fähig.
+
+    Folgenreiches (Betriebsart, Sicherung zurückspielen, Netzwerk-Freigabe, Installieren, Entfernen, Updates, Beenden)
+    braucht zusätzlich den Prüfwert aus `zustand()`. Er gilt für einen Aufruf. Antworten der Brücke gehen nur an die
+    Hauptseite – ein Rahmen, der trotz aller Regeln eine Nachricht absetzen könnte, kennt ihn nicht."""
 
     def __init__(self, app: "WorkerApp"):
         self._app = app
+        self._pruefwert = secrets.token_urlsafe(18)
+
+    def _gilt(self, wert) -> bool:
+        ok = isinstance(wert, str) and secrets.compare_digest(wert.encode(), self._pruefwert.encode())
+        if ok:
+            self._pruefwert = secrets.token_urlsafe(18)
+        else:
+            log.warning("Aufruf ohne gültigen Prüfwert abgelehnt")
+        return ok
 
     # -- Zustand
     def zustand(self) -> dict:
@@ -32,6 +51,7 @@ class Api:
         inst = motor.installiert()
         return {
             "version": VERSION, "system": "windows" if sys.platform == "win32" else "linux",
+            "pruefwert": self._pruefwert, "ansicht": a.ansicht or a.ansicht_soll(),
             "einstellungen": a.e.fuer_oberflaeche(), "autostart": autostart.aktiv(),
             "dienst": a.dienst.fuer_oberflaeche(), "motor": inst, "profil": a.dienst.profil(),
             "installation": a.installation.stand() if a.installation else None,
@@ -53,11 +73,13 @@ class Api:
         a.e.speichern()
         return {"ok": True}
 
-    def betrieb_wechseln(self, ziel: str, regel_entfernen: bool = False) -> dict:
+    def betrieb_wechseln(self, wert: str, ziel: str, regel_entfernen: bool = False) -> dict:
         """Zwischen „Alles auf diesem PC“ und „Mit einem Server verbinden“ wechseln – in beide Richtungen. Die
         Kampagnen von „Alles auf diesem PC“ bleiben auf dem PC und sind nach dem Zurückwechseln wieder da.
         `regel_entfernen` (nur zu „verbunden“, Haken im Dialog): danach die Netzwerk-Freigabe aus Windows nehmen."""
         a = self._app
+        if not self._gilt(wert):
+            return {"ok": False, "fehler": "pruefwert"}
         if ziel not in ("einzelplatz", "verbunden") or ziel == a.e.art:
             return {"ok": False, "fehler": "unbekannt"}
         if a.ep_update.laeuft() or a.sicherung.laeuft() or (
@@ -93,17 +115,36 @@ class Api:
         return r
 
     def taleward_oeffnen(self) -> dict:
-        ok = self._app.app_fenster_oeffnen()
-        if ok:
-            self._app.programm_in_den_hintergrund()  # ein Fenster: die App; das Programm wartet im Infobereich
-        return {"ok": ok}
+        """Nach der Einrichtung: vom kleinen Fenster zu Taleward Desktop."""
+        return {"ok": self._app.desktop_oeffnen()}
+
+    def verwaltung_adresse(self, seite: str = "") -> dict:
+        """Adresse der Verwaltung für den Rahmen in Taleward Desktop – nur feste Ziele, nur „Alles auf diesem PC“."""
+        a = self._app
+        if not a.e.einzelplatz or (seite or "") not in a.VERWALTUNG_SEITEN:
+            return {"ok": False}
+        pfad = a.VERWALTUNG_SEITEN[seite or ""].lstrip("/")
+        return {"ok": True, "adresse": huelle.APP_HERKUNFT + "/verwaltung/" + pfad}
+
+    def verarbeitung(self) -> dict | None:
+        """Taleward Desktop: Stand der Verarbeitung vom Server dieses PCs (ohne Inhalte, siehe server.verarbeitung)."""
+        return self._app.verarbeitung()
+
+    def handy_adresse(self) -> dict:
+        """Taleward Desktop: Adresse im Heimnetz zum Eintippen, falls ein Handy den QR-Code nicht liest."""
+        a = self._app
+        if not a.e.einzelplatz or not a.server.bereit.is_set():
+            return {"adresse": None}
+        return {"adresse": server.heimnetz_adresse(einzelplatz.ADRESSE)}
 
     def im_browser_oeffnen(self) -> None:
         if self._app.server.app_bereit.is_set():
             webbrowser.open(einzelplatz.APP_ADRESSE)
 
-    def netz_freigeben(self) -> dict:
+    def netz_freigeben(self, wert: str) -> dict:
         """Firewall-Regel anlegen (Windows fragt nach Administratorrechten)."""
+        if not self._gilt(wert):
+            return {"ok": False, "fehler": "pruefwert"}
         ok = netzfreigabe.anlegen()
         self._app.netz_pruefen()
         return {"ok": ok}
@@ -112,11 +153,16 @@ class Api:
         self._app.netz_pruefen()
         return self._app.netz or {}
 
-    def taleward_neu_starten(self) -> None:
+    def taleward_neu_starten(self, wert: str) -> dict:
+        if not self._gilt(wert):
+            return {"ok": False, "fehler": "pruefwert"}
         if not self._app.ep_update.laeuft():
             threading.Thread(target=self._app.server_neu_starten, daemon=True).start()
+        return {"ok": True}
 
-    def taleward_aktualisieren(self) -> dict:
+    def taleward_aktualisieren(self, wert: str) -> dict:
+        if not self._gilt(wert):
+            return {"ok": False, "fehler": "pruefwert"}
         if not self._app.e.einzelplatz:
             return {"ok": False, "grund": "aktuell"}
         return self._app.ep_update.jetzt()
@@ -148,8 +194,10 @@ class Api:
         a.sicherung.gewaehlt = datei
         return {"ok": True, "datei": datei.name}
 
-    def sicherung_zurueckspielen(self, passwort: str) -> dict:
+    def sicherung_zurueckspielen(self, wert: str, passwort: str) -> dict:
         a = self._app
+        if not self._gilt(wert):
+            return {"ok": False, "fehler": "pruefwert"}
         if not a.e.einzelplatz or not passwort:
             return {"ok": False, "fehler": "passwort"}
         return a.sicherung.zurueckspielen(passwort)
@@ -186,8 +234,10 @@ class Api:
             return {"ok": False, "fehler": e.code}
         return {"ok": True, "adresse": a, "name": info["name"], "unverschluesselt": server.unverschluesselt(a)}
 
-    def koppeln(self, adresse: str, code: str, name: str, unsicher: bool = False) -> dict:
+    def koppeln(self, wert: str, adresse: str, code: str, name: str, unsicher: bool = False) -> dict:
         a = self._app
+        if not self._gilt(wert):
+            return {"ok": False, "fehler": "pruefwert"}
         try:
             adr = server.adresse_normalisieren(adresse)
             if server.unverschluesselt(adr) and not unsicher:
@@ -202,7 +252,9 @@ class Api:
         a.fassung_abfragen()
         return {"ok": True, "name": a.e.name, "serverVersion": a.server_version}
 
-    def installieren(self, testmodus: bool = False, prozessor: bool | None = None) -> dict:
+    def installieren(self, wert: str, testmodus: bool = False, prozessor: bool | None = None) -> dict:
+        if not self._gilt(wert):
+            return {"ok": False, "fehler": "pruefwert"}
         if prozessor is not None:
             self._app.e.geraet = "cpu" if prozessor else "auto"
             self._app.e.speichern()
@@ -269,35 +321,53 @@ class Api:
             a.e.sprache = wert
         elif name == "hinweis_hintergrund_gezeigt":
             a.e.hinweis_hintergrund_gezeigt = True
+        elif name == "sicherung_erinnern":
+            a.e.sicherung_erinnern = bool(wert)
+        elif name == "leiste_schmal":
+            a.e.leiste_schmal = bool(wert)
         else:
             return {"ok": False, "fehler": "unbekannt"}
         a.e.speichern()
         return {"ok": True}
 
-    def app_aktualisieren(self) -> dict:
+    def app_aktualisieren(self, wert: str) -> dict:
         a = self._app
+        if not self._gilt(wert):
+            return {"ok": False, "fehler": "pruefwert"}
         if not a.app_update:
             return {"ok": False}
         a.selbst_aktualisieren()
         return {"ok": True}
 
-    def entkoppeln(self) -> None:
+    def entkoppeln(self, wert: str) -> dict:
         """Mit einem (neuen) Kopplungscode wieder verbinden. Die Betriebsart wechselt „Betriebsart wechseln“."""
         a = self._app
+        if not self._gilt(wert):
+            return {"ok": False, "fehler": "pruefwert"}
         if a.e.einzelplatz:
-            return  # der Worker gehört zu Taleward auf diesem PC
+            return {"ok": False}  # der Worker gehört zu Taleward auf diesem PC
         a.dienst.stoppen()
         a.e.token = ""
         a.e.betrieb = "verbunden"
         a.e.speichern()
+        return {"ok": True}
 
-    def ki_entfernen(self, modelle_auch: bool = True) -> None:
+    def ki_entfernen(self, wert: str, modelle_auch: bool = True) -> dict:
+        if not self._gilt(wert):
+            return {"ok": False, "fehler": "pruefwert"}
         self._app.dienst.stoppen()
         motor.entfernen(modelle_auch=bool(modelle_auch))
         self._app.e.motor_fassung = ""
         self._app.e.speichern()
+        return {"ok": True}
 
-    def ollama_entfernen(self) -> None:
+    def ollama_entfernen(self, wert: str) -> dict:
+        if not self._gilt(wert):
+            return {"ok": False, "fehler": "pruefwert"}
+        self._ollama_entfernen()
+        return {"ok": True}
+
+    def _ollama_entfernen(self) -> None:
         a = self._app
         a.e.recaps_lokal = False
         a.e.speichern()
@@ -333,14 +403,14 @@ class Api:
         if url.startswith("https://"):
             webbrowser.open(url)
 
-    def verwaltung_oeffnen(self, seite: str = "") -> None:
-        self._app.verwaltung_oeffnen(seite)
-
     def fenster_verstecken(self) -> None:
         self._app.verstecken()
 
-    def beenden(self) -> None:
+    def beenden(self, wert: str) -> dict:
+        if not self._gilt(wert):
+            return {"ok": False, "fehler": "pruefwert"}
         threading.Thread(target=self._app.beenden, daemon=True).start()
+        return {"ok": True}
 
 
 class WorkerApp:
@@ -351,7 +421,9 @@ class WorkerApp:
         self._update: serverupdate.ServerUpdate | None = None
         self.sicherung = mitnehmen.Sicherung(self)
         self.hilfe = ""  # zuletzt gezeigte Hilfe-Datei (genau diese wird gespeichert)
-        self.app_fenster = None
+        self.huelle = huelle.Huelle(pfade.ressourcen() / "ui")
+        self.ansicht = ""  # was das Fenster gerade zeigt: desktop | worker
+        self._verarbeitung: tuple[float, dict | None] = (0.0, None)
         self.netz: dict | None = None  # Firewall und Netzprofil (Einzelplatz, Windows) – langsam, darum zwischengespeichert
         self.installation: motor.Installation | None = None
         self.ollama_installation: ollama.Installation | None = None
@@ -383,6 +455,7 @@ class WorkerApp:
         if self._server is None:
             self._server = einzelplatz.ServerDienst()
             self._server.bei_bereit = self._worker_koppeln
+        self._server.huelle = self.huelle.herkunft if self.huelle.anschluss else ""
         return self._server
 
     @property
@@ -435,6 +508,7 @@ class WorkerApp:
                 self.taleward_starten()
             elif motor.installiert():
                 self.installieren(self.e.testmodus)  # KI-Paket zu alt für „Alles auf diesem PC“ → neueste Fassung
+        self.ansicht_anwenden()
         self.tray_aktualisieren()
 
     def motor_passt_einzelplatz(self) -> bool:
@@ -506,39 +580,73 @@ class WorkerApp:
             self.dienst.protokoll.schreiben(f"Netzwerk-Freigabe nicht möglich: {type(e).__name__}: {e}")
         self.netz_pruefen()
 
-    def app_fenster_oeffnen(self) -> bool:
-        if not self.server.app_bereit.is_set():
-            return False  # die App lädt der Server beim ersten Start erst noch
-        if self.app_fenster is not None:
-            try:
-                self.app_fenster.show()
-                self.app_fenster.restore()
-                return True
-            except Exception:  # noqa: BLE001 – Fenster gibt es nicht mehr
-                self.app_fenster = None
-        try:
-            self.app_fenster = fenster.app_fenster(einzelplatz.APP_ADRESSE, self._app_fenster_zu)
-        except Exception as e:  # noqa: BLE001 – dann bleibt der Browser
-            log.warning("Programmfenster nicht möglich: %s", e)
-            webbrowser.open(einzelplatz.APP_ADRESSE)
-        return True
-
     VERWALTUNG_SEITEN = {"": "", "transkription#hf": "/transkription#hf"}  # nur feste Ziele aus der Oberfläche
 
+    # -- Taleward Desktop / Taleward Worker
+    def ansicht_soll(self) -> str:
+        """Taleward Desktop, sobald „Alles auf diesem PC“ eingerichtet ist (Konto da); sonst das kleine Fenster
+        (Taleward Worker bzw. die Einrichtung)."""
+        bereit = motor.installiert() or os.environ.get("TALEWARD_MOTOR")
+        return "desktop" if self.e.einzelplatz and self.e.konto_angelegt and bereit else "worker"
+
+    def ansicht_anwenden(self) -> None:
+        """Fenster auf die passende Ansicht umstellen: Seite, Titel, Größe (die letzte je Ansicht wird gemerkt)."""
+        soll = self.ansicht_soll()
+        w = self.fenster
+        if w is None or soll == self.ansicht or getattr(w, "_taleward_dicht", False) is not True:
+            return
+        alt = self.ansicht
+        try:
+            if alt:
+                setattr(self.e, "fenster_" + alt, [int(w.width), int(w.height)])
+                self.e.speichern()
+        except Exception:  # noqa: BLE001 – Größe merken ist Beiwerk
+            pass
+        self.ansicht = soll
+        breite, hoehe, mindestens = fenstergroesse_fuer(soll, getattr(self.e, "fenster_" + soll), bildschirm_groesse())
+        try:
+            w.load_url(self.huelle.adresse(SEITEN[soll]))
+            w.set_title(self.titel(soll))
+            fenster.mindestgroesse(w, *mindestens)
+            w.resize(breite, hoehe)
+        except Exception:  # noqa: BLE001
+            log.exception("Ansicht nicht umgestellt")
+
+    def titel(self, ansicht: str) -> str:
+        if ansicht == "desktop":
+            return "Taleward Desktop"
+        return "Taleward Worker" if self.e.art == "verbunden" else "Taleward"
+
+    def desktop_oeffnen(self) -> bool:
+        if self.ansicht_soll() != "desktop":
+            return False
+        self.ansicht_anwenden()
+        self.bereich_zeigen("kampagnen")
+        return True
+
+    def bereich_zeigen(self, bereich: str) -> None:
+        """Fenster nach vorn und (in Taleward Desktop) einen Bereich der Leiste wählen – nur feste Namen."""
+        self.zeigen()
+        if self.fenster is None or self.ansicht != "desktop" or bereich not in BEREICHE:
+            return
+        try:
+            self.fenster.evaluate_js(f"window.talewardBereich && window.talewardBereich({json.dumps(bereich)})")
+        except Exception:  # noqa: BLE001
+            pass
+
     def verwaltung_oeffnen(self, seite: str = "") -> None:
-        """Nur bei „Alles auf diesem PC“ (dort ist die Spielleitung Verwalter). Beim Verbinden gehört die Verwaltung
-        dem Betreiber des Servers – kein Knopf dafür im Programm."""
+        """Nur bei „Alles auf diesem PC“ (dort ist die Spielleitung Verwalter): im Fenster, Bereich Verwaltung."""
         if self.e.einzelplatz:
-            pfad = self.VERWALTUNG_SEITEN.get(seite or "", "")
-            webbrowser.open(einzelplatz.ADRESSE + "/verwaltung" + pfad)  # nur vom PC selbst erreichbar
+            self.bereich_zeigen("verwaltung")
 
-    def programm_in_den_hintergrund(self) -> None:
-        """Nach „Taleward öffnen“: Programmfenster in den Infobereich (ohne Infobereich bleibt es, wie es ist)."""
-        if self.fenster and self.tray is not None:
-            self.verstecken()
-
-    def _app_fenster_zu(self) -> None:
-        self.app_fenster = None
+    def verarbeitung(self) -> dict | None:
+        """Stand der Verarbeitung vom Server dieses PCs, höchstens alle 3 Sekunden abgefragt."""
+        if not (self.e.einzelplatz and self.e.gekoppelt):
+            return None
+        jetzt = time.monotonic()
+        if jetzt - self._verarbeitung[0] > 3:
+            self._verarbeitung = (jetzt, server.verarbeitung(self.e.server, self.e.token))
+        return self._verarbeitung[1]
 
     def motor_passt(self) -> bool:
         inst = motor.installiert()
@@ -769,6 +877,12 @@ class WorkerApp:
 
     def beenden(self) -> None:
         self._beendet.set()
+        try:
+            if self.fenster is not None and self.ansicht:
+                setattr(self.e, "fenster_" + self.ansicht, [int(self.fenster.width), int(self.fenster.height)])
+                self.e.speichern()
+        except Exception:  # noqa: BLE001 – Größe merken ist Beiwerk
+            pass
         for inst in (self.installation, self.ollama_installation):
             if inst is not None:
                 inst.abbrechen()  # sonst schreibt uv nach dem Ende der App minutenlang weiter in motor-neu
@@ -820,8 +934,7 @@ class WorkerApp:
             return (("Fortsetzen" if de else "Resume") if self.e.pausiert else ("Pausieren" if de else "Pause"))
 
         def app_oeffnen():
-            if self.app_fenster_oeffnen():
-                self.programm_in_den_hintergrund()
+            self.bereich_zeigen("kampagnen")
 
         def mit_app() -> bool:
             return bool(self.e.einzelplatz and self.e.konto_angelegt)
@@ -830,8 +943,8 @@ class WorkerApp:
             # Bei „Alles auf diesem PC“ ist die App das Hauptfenster (Doppelklick), das Programm der zweite Punkt
             pystray.MenuItem("Taleward öffnen" if de else "Open Taleward", app_oeffnen,
                              visible=lambda _: mit_app(), default=mit_app()),
-            pystray.MenuItem("Einstellungen und Status" if de else "Settings and status", lambda: self.zeigen(),
-                             default=not mit_app()),
+            pystray.MenuItem("Einstellungen und Status" if de else "Settings and status",
+                             lambda: self.bereich_zeigen("uebersicht"), default=not mit_app()),
             pystray.MenuItem("Verwaltung" if de else "Administration", lambda: self.verwaltung_oeffnen(),
                              visible=lambda _: mit_app()),
             pystray.MenuItem(pause_text, lambda: (self.dienst.pausieren(not self.e.pausiert),
@@ -865,9 +978,10 @@ class WorkerApp:
             if jetzt != letzte:
                 letzte = jetzt
                 self.tray_aktualisieren()
-            # Braucht etwas Hilfe, kommt das Programmfenster von selbst nach vorn – einmal je Vorfall
+            # Braucht etwas Hilfe, kommt das Programmfenster von selbst nach vorn – einmal je Vorfall. Nicht in Taleward
+            # Desktop: Dort läuft womöglich gerade eine Runde im selben Fenster; die Leiste zeigt es (keine Störung)
             hilfe = self.braucht_hilfe()
-            if hilfe and not hilfe_vorher:
+            if hilfe and not hilfe_vorher and self.ansicht != "desktop":
                 try:
                     self.zeigen()
                 except Exception:  # noqa: BLE001 – Fenster gibt es (noch) nicht
@@ -896,18 +1010,32 @@ class WorkerApp:
             return
         self.hardware = hardware.bericht()
         fenster.absichern()  # vor dem ersten Fenster: an den Browser nur noch http(s)
+        try:
+            self.huelle.starten()  # vor dem Server: er bekommt die Herkunft der Oberfläche mit (frame-ancestors)
+        except OSError:
+            log.exception("Oberfläche nicht startbar")
+            meldung_zeigen("Taleward konnte nicht starten: kein freier Anschluss auf diesem PC. Starte den PC neu "
+                           "und versuch es dann noch einmal.")
+            return
+        if not fenster.bruecke_absichern(self.huelle.herkunft, fenster.api_namen(Api)):
+            meldung_zeigen("Taleward konnte sein Fenster nicht sicher öffnen. Bitte installiere Taleward neu.")
+            self.huelle.stoppen()
+            return
         self._tray_starten()
         versteckt = self.hintergrund and self.e.gekoppelt
-        breite, hoehe, mindestens = fenstergroesse(bildschirm_hoehe())
-        self.fenster = webview.create_window(
-            "Taleward", str(pfade.ressourcen() / "ui" / "index.html"), js_api=Api(self),
-            width=breite, height=hoehe, min_size=mindestens, background_color=fenster.papier(),
+        self.ansicht = self.ansicht_soll()
+        breite, hoehe, mindestens = fenstergroesse_fuer(self.ansicht, getattr(self.e, "fenster_" + self.ansicht),
+                                                        bildschirm_groesse())
+        self.fenster = fenster.hauptfenster(
+            self.titel(self.ansicht), self.huelle.adresse(SEITEN[self.ansicht]), self.huelle.herkunft, Api(self),
+            width=breite, height=hoehe, min_size=mindestens, text_select=True,
             hidden=versteckt and self.tray is not None, minimized=versteckt and self.tray is None)
         self.fenster.events.closing += self._beim_schliessen
         threading.Thread(target=self._hintergrund_pflege, daemon=True, name="pflege").start()
         threading.Thread(target=self._tray_nachfuehren, daemon=True, name="tray").start()
-        # Dauerhafter Speicher im Benutzerordner: Die App im Programmfenster merkt sich ihre Anmeldung und sichert
-        # Aufnahmen bis zum Hochladen. Downloads (Umzugsdatei, „Kapitel teilen“) mit Speichern-Dialog.
+        # Dauerhafter Speicher im Benutzerordner (derselbe wie für das frühere App-Fenster): Die App im Rahmen merkt
+        # sich ihre Anmeldung und sichert Aufnahmen bis zum Hochladen. Downloads (Umzugsdatei, „Kapitel teilen“) mit
+        # Speichern-Dialog. Neue Fenster gehen nie ins Programm (fenster.bruecke_absichern).
         webview.settings["ALLOW_DOWNLOADS"] = True
         webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
         speicher = pfade.fenster_speicher()
@@ -917,11 +1045,8 @@ class WorkerApp:
                 self.dienst.protokoll.schreiben("Autostart auf das umbenannte Programm umgestellt")
         except OSError:
             pass
-        # Eigener freier Anschluss für die Programmoberfläche: pywebview nähme mit dauerhaftem Speicher sonst immer
-        # denselben (42001) – dann lieferte WebView2 nach einem Update alte Seiten aus dem Zwischenspeicher, und ein
-        # anderes Programm könnte den Anschluss vorher belegen. Die Oberfläche speichert selbst nichts im Browser.
-        webview.start(debug=bool(os.environ.get("TALEWARD_DEBUG")), private_mode=False,
-                      storage_path=str(speicher), http_port=fenster.freier_anschluss())
+        webview.start(debug=bool(os.environ.get("TALEWARD_DEBUG")), private_mode=False, storage_path=str(speicher))
+        self.huelle.stoppen()
         self._beendet.set()
         self.dienst.stoppen()
         if self._server is not None:
@@ -958,6 +1083,53 @@ def tray_titel(d: dict, sprache: str, update: bool = False) -> str:
 # ---------------------------------------------------------------------- Fenster und Browser-Kern
 FENSTER = (560, 760)
 FENSTER_MINDESTENS = (460, 600)
+DESKTOP = (1280, 820)
+DESKTOP_MINDESTENS = (900, 600)
+SEITEN = {"desktop": "desktop.html", "worker": "index.html"}
+BEREICHE = ("kampagnen", "schirm", "uebersicht", "verarbeitung", "sicherung", "einstellungen", "hilfe", "verwaltung")
+
+
+def bildschirm_groesse() -> tuple[int, int] | None:
+    try:
+        import webview
+
+        s = webview.screens[0] if webview.screens else None
+        return (int(s.width), int(s.height)) if s else None
+    except Exception:  # noqa: BLE001 – dann die Vorgabe
+        return None
+
+
+def fenstergroesse_fuer(ansicht: str, gemerkt, bildschirm: tuple[int, int] | None) -> tuple[int, int, tuple[int, int]]:
+    """Größe je Ansicht: zuletzt gemerkt, sonst die Vorgabe – immer ganz auf dem Bildschirm (Taskleiste und Rahmen
+    abgezogen) und nie unter der Mindestgröße, außer der Bildschirm ist selbst kleiner."""
+    if ansicht != "desktop":
+        breite, hoehe, mindestens = fenstergroesse(bildschirm[1] if bildschirm else None)
+        if isinstance(gemerkt, list) and len(gemerkt) == 2 and all(isinstance(x, int) for x in gemerkt):
+            breite, hoehe = max(mindestens[0], gemerkt[0]), max(mindestens[1], gemerkt[1])
+            if bildschirm:
+                breite, hoehe = min(breite, bildschirm[0]), min(hoehe, max(400, bildschirm[1] - 80))
+        return breite, hoehe, mindestens
+    breite, hoehe = DESKTOP
+    if isinstance(gemerkt, list) and len(gemerkt) == 2 and all(isinstance(x, int) for x in gemerkt):
+        breite, hoehe = gemerkt
+    mindestens = DESKTOP_MINDESTENS
+    if bildschirm:
+        nutzbar_b, nutzbar_h = max(400, bildschirm[0] - 20), max(400, bildschirm[1] - 80)
+        mindestens = (min(mindestens[0], nutzbar_b), min(mindestens[1], nutzbar_h))
+        breite, hoehe = min(breite, nutzbar_b), min(hoehe, nutzbar_h)
+    return max(breite, mindestens[0]), max(hoehe, mindestens[1]), mindestens
+
+
+def meldung_zeigen(text: str) -> None:
+    log.error(text)
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, text, "Taleward", 0x10)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        pass
 WEBVIEW2_LINK = "https://developer.microsoft.com/microsoft-edge/webview2/"
 
 
