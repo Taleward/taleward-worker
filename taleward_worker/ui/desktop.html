@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Taleward Desktop</title>
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="desktop.css">
+</head>
+<body class="d">
+<a class="sprung" href="#inhalt" data-t="d_zum_inhalt"></a>
+<aside class="leiste" id="leiste">
+  <div class="leiste__kopf">
+    <img class="leiste__marke" src="marke/taleward-lockup-inverse.svg" alt="Taleward">
+    <img class="leiste__zeichen" src="marke/taleward-mark-inverse.svg" alt="Taleward">
+  </div>
+  <button class="zustand" id="zustand" type="button" data-art="ruhe" aria-describedby="zustand-neben">
+    <span class="zustand__punkt" aria-hidden="true"></span>
+    <span class="zustand__text"><strong id="zustand-titel"></strong><span id="zustand-neben"></span></span>
+    <span class="zustand__balken" id="zustand-balken" hidden><span></span></span>
+  </button>
+  <nav class="bereiche" aria-label="Taleward" id="bereiche">
+    <button type="button" data-bereich="kampagnen"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/></svg><span class="bereiche__name" data-t="d_kampagnen"></span><span class="zaehler" data-zaehler="kampagnen" hidden></span></button>
+    <button type="button" data-bereich="schirm"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5l6-2v16l-6 2z"/><path d="M9 3l6 2v16l-6-2"/><path d="M15 5l6-2v16l-6 2z"/></svg><span class="bereiche__name" data-t="d_schirm"></span></button>
+    <button type="button" data-bereich="uebersicht"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span class="bereiche__name" data-t="d_uebersicht"></span><span class="zaehler" data-zaehler="uebersicht" hidden></span></button>
+    <button type="button" data-bereich="verarbeitung"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg><span class="bereiche__name" data-t="d_verarbeitung"></span></button>
+    <button type="button" data-bereich="sicherung"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9"/><path d="M10 13h4"/></svg><span class="bereiche__name" data-t="d_sicherung"></span></button>
+    <button type="button" data-bereich="einstellungen"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h9M19 6h1M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="16" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg><span class="bereiche__name" data-t="d_einstellungen"></span></button>
+    <button type="button" data-bereich="hilfe"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7"/><path d="M12 17h.01"/></svg><span class="bereiche__name" data-t="d_hilfe"></span></button>
+  </nav>
+  <div class="leiste__fuss">
+    <p class="leiste__fassung"><span>Taleward Desktop</span><span id="fuss-fassung"></span></p>
+    <button class="leiste__klappe" id="leiste-klappe" type="button" aria-controls="leiste" aria-expanded="true"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg><span class="bereiche__name" data-t="d_leiste_einklappen"></span></button>
+  </div>
+</aside>
+
+<main class="inhalt" id="inhalt" tabindex="-1">
+<!-- ============================================================ App im Rahmen (Kampagnen, SL-Schirm) -->
+<section class="rahmen" data-ansicht="app" hidden>
+  <div class="rahmen__hinweis" id="app-hinweis" hidden>
+    <div class="karte">
+      <h1 id="app-hinweis-titel"></h1>
+      <p class="leise" id="app-hinweis-text"></p>
+      <div class="knopfreihe">
+        <button class="tw-btn tw-btn--primary" id="app-hinweis-update" type="button" data-t="Jetzt aktualisieren" hidden></button>
+        <button class="tw-btn tw-btn--secondary" id="app-hinweis-browser" type="button" data-t="Im Browser öffnen" hidden></button>
+      </div>
+    </div>
+  </div>
+  <iframe id="rahmen-app" title="Taleward" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals" allow="microphone; clipboard-write" referrerpolicy="no-referrer"></iframe>
+</section>
+
+<!-- ============================================================ Verwaltung im Rahmen -->
+<section class="rahmen rahmen--mit-kopf" data-ansicht="verwaltung" hidden>
+  <div class="rahmen__kopf">
+    <button class="tw-btn tw-btn--quiet" id="verwaltung-zurueck" type="button" data-t="d_zurueck_einstellungen"></button>
+    <strong data-t="d_verwaltung"></strong>
+  </div>
+  <iframe id="rahmen-verwaltung" title="Verwaltung" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals" allow="clipboard-write" referrerpolicy="no-referrer"></iframe>
+</section>
+
+<!-- ============================================================ Übersicht -->
+<section class="bereich" data-ansicht="uebersicht" hidden>
+  <h1 data-t="d_uebersicht"></h1>
+  <div class="karte gross" id="ue-zustand" data-art="ruhe">
+    <div class="gross__kopf"><span class="zustand__punkt gross__punkt" aria-hidden="true"></span>
+      <div><p class="gross__titel" id="ue-titel"></p><p class="leise" id="ue-text"></p></div></div>
+    <div class="meldung" id="ue-update" hidden></div>
+    <div class="knopfreihe" id="ue-knoepfe"></div>
+  </div>
+  <div class="raster">
+    <div class="karte">
+      <h2 data-t="d_handys"></h2>
+      <ul class="pruefliste" id="ue-handys"></ul>
+      <details class="aufklapp" id="ue-adresse-zeile" hidden><summary data-t="d_code_geht_nicht"></summary>
+        <p class="leise klein" data-t="d_adresse_text"></p><p class="adresse waehlbar" id="ue-adresse"></p></details>
+    </div>
+    <div class="karte">
+      <h2 data-t="d_verarbeitung"></h2>
+      <div class="zahlen"><div class="zahl"><div class="zahl__wert" id="ue-heute">0</div><div class="zahl__text" data-t="d_heute"></div></div>
+        <div class="zahl"><div class="zahl__wert" id="ue-gesamt">0</div><div class="zahl__text" data-t="d_insgesamt"></div></div></div>
+      <p class="leise klein" id="ue-zuletzt"></p>
+    </div>
+    <div class="karte">
+      <h2 data-t="d_kapitel_schreiben"></h2>
+      <dl class="liste"><dt data-t="d_abschrift"></dt><dd id="ue-abschrift"></dd><dt data-t="d_kapitel"></dt><dd id="ue-kapitel"></dd></dl>
+    </div>
+    <div class="karte">
+      <h2 data-t="d_sicherung"></h2>
+      <p id="ue-sicherung"></p>
+      <p class="erinnerung" id="ue-erinnerung" hidden><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span data-t="d_erinnerung"></span></p>
+      <button class="tw-btn tw-btn--secondary" type="button" data-gehe="sicherung" data-t="d_zur_sicherung"></button>
+    </div>
+    <div class="karte">
+      <h2 data-t="d_dieser_pc"></h2>
+      <dl class="liste"><dt data-t="d_grafikkarte"></dt><dd id="ue-gpu"></dd><dt data-t="d_grenze"></dt><dd id="ue-grenze"></dd>
+        <dt data-t="d_platz"></dt><dd id="ue-platz"></dd><dt data-t="d_autostart"></dt><dd id="ue-autostart"></dd></dl>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ Verarbeitung -->
+<section class="bereich" data-ansicht="verarbeitung" hidden>
+  <h1 data-t="d_verarbeitung"></h1>
+  <div class="karte">
+    <h2 data-t="d_gerade"></h2>
+    <div id="vb-leer"><p class="leise" id="vb-leer-text"></p></div>
+    <div id="vb-lauf" hidden>
+      <p class="vb-titel" id="vb-titel"></p>
+      <p class="leise" id="vb-neben"></p>
+      <ol class="stufen" id="vb-stufen">
+        <li data-stufe="transcribing" data-t="d_stufe_abschrift"></li>
+        <li data-stufe="summarizing" data-t="d_stufe_kapitel"></li>
+        <li data-stufe="pruefen" data-t="d_stufe_pruefen"></li>
+      </ol>
+      <div class="balken" id="vb-balken"><span></span></div>
+      <div class="fortschritt-zeile"><span id="vb-rest"></span><strong id="vb-prozent"></strong></div>
+    </div>
+    <p class="leise klein" id="vb-wartet"></p>
+    <div class="knopfreihe"><button class="tw-btn tw-btn--primary" id="vb-pause" type="button"></button></div>
+  </div>
+  <div class="karte">
+    <h2 data-t="d_zuletzt_fertig"></h2>
+    <p class="leise" id="vb-tabelle-leer" data-t="d_noch_nichts_fertig"></p>
+    <div class="tabelle-huelle"><table class="tabelle" id="vb-tabelle" hidden>
+      <thead><tr><th scope="col" data-t="d_t_runde"></th><th scope="col" data-t="d_t_kampagne"></th><th scope="col" data-t="d_t_schritt"></th>
+        <th scope="col" data-t="d_t_laenge"></th><th scope="col" data-t="d_t_dauer"></th><th scope="col" data-t="d_t_ergebnis"></th></tr></thead>
+      <tbody></tbody></table></div>
+  </div>
+  <div class="karte">
+    <h2 data-t="d_leistung"></h2>
+    <div class="regler" data-regler hidden>
+      <div class="regler__kopf"><div class="zeile__text"><strong data-t="regler_titel"></strong><span data-t="regler_text"></span></div>
+        <output class="regler__wert" data-regler-wert></output></div>
+      <input type="range" min="2" max="8" step="0.5" data-regler-eingabe aria-labelledby="vb-regler-name">
+      <span id="vb-regler-name" class="unsichtbar" data-t="regler_titel"></span>
+      <div class="regler__skala"><span>2 GB</span><span data-regler-max></span></div>
+      <p class="regler__folge" data-regler-folge></p>
+    </div>
+    <div class="zeile" id="vb-prozessor-zeile" hidden><div class="zeile__text"><strong data-t="prozessor_titel"></strong><span data-t="prozessor_text"></span></div>
+      <label class="schalter"><input type="checkbox" id="vb-prozessor"><span></span><b class="unsichtbar" data-t="prozessor_titel"></b></label></div>
+    <div class="zeile"><div class="zeile__text"><strong data-t="d_genauigkeit"></strong><span data-t="d_genauigkeit_text"></span></div>
+      <select data-einstellung="modell" aria-label="Genauigkeit">
+        <option value="auto" data-t="modell_auto"></option>
+        <option value="large-v3" data-t="d_modell_genau"></option>
+        <option value="large-v3-turbo" data-t="d_modell_schnell"></option>
+      </select></div>
+  </div>
+</section>
+
+<!-- ============================================================ Sicherung -->
+<section class="bereich" data-ansicht="sicherung" hidden>
+  <h1 data-t="d_sicherung"></h1>
+  <div class="karte">
+    <p class="gross__titel" id="si-zuletzt"></p>
+    <p class="leise" id="si-seitdem"></p>
+    <p class="erinnerung" id="si-erinnerung" hidden><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span data-t="d_erinnerung"></span></p>
+    <div class="meldung" id="si-stand" role="status" hidden></div>
+    <p class="leise" data-t="sicherung_text"></p>
+    <div class="knopfreihe">
+      <button class="tw-btn tw-btn--primary" id="si-speichern" type="button" data-t="Sicherung speichern"></button>
+      <button class="tw-btn tw-btn--secondary" id="si-zurueck" type="button" data-t="Sicherung zurückspielen"></button>
+    </div>
+  </div>
+  <div class="karte">
+    <div class="zeile"><div class="zeile__text"><strong data-t="d_erinnern_titel"></strong><span data-t="d_erinnern_text"></span></div>
+      <label class="schalter"><input type="checkbox" data-einstellung="sicherung_erinnern"><span></span><b class="unsichtbar" data-t="d_erinnern_titel"></b></label></div>
+  </div>
+</section>
+
+<!-- ============================================================ Einstellungen -->
+<section class="bereich" data-ansicht="einstellungen" hidden>
+  <h1 data-t="d_einstellungen"></h1>
+  <div class="karte">
+    <h2 data-t="d_start_fenster"></h2>
+    <div class="zeile"><div class="zeile__text"><strong data-t="autostart_titel"></strong><span data-t="autostart_text"></span></div>
+      <label class="schalter"><input type="checkbox" data-einstellung="autostart"><span></span><b class="unsichtbar" data-t="autostart_titel"></b></label></div>
+    <div class="zeile"><div class="zeile__text"><strong data-t="hintergrund_titel"></strong><span data-t="hintergrund_text"></span></div>
+      <label class="schalter"><input type="checkbox" data-einstellung="im_hintergrund"><span></span><b class="unsichtbar" data-t="hintergrund_titel"></b></label></div>
+    <div class="zeile"><div class="zeile__text"><strong data-t="Sprache"></strong></div>
+      <select data-einstellung="sprache" aria-label="Sprache / Language"><option value="" data-t="Wie das System"></option><option value="de">Deutsch</option><option value="en">English</option></select></div>
+  </div>
+  <div class="karte">
+    <h2 data-t="d_updates"></h2>
+    <div class="zeile"><div class="zeile__text"><strong data-t="update_titel"></strong><span data-t="d_update_text"></span></div>
+      <label class="schalter"><input type="checkbox" data-einstellung="auto_update"><span></span><b class="unsichtbar" data-t="update_titel"></b></label></div>
+    <div class="meldung" id="es-update" hidden></div>
+    <div class="knopfreihe" id="es-update-knoepfe">
+      <button class="tw-btn tw-btn--secondary" id="es-taleward-aktualisieren" type="button" data-t="Jetzt aktualisieren" hidden></button>
+      <button class="tw-btn tw-btn--secondary" id="es-programm-aktualisieren" type="button" data-t="d_programm_aktualisieren" hidden></button>
+    </div>
+  </div>
+  <div class="karte">
+    <h2 data-t="d_kapitel_schreiben"></h2>
+    <div class="zeile" id="es-recaps-zeile"><div class="zeile__text"><strong data-t="d_lokal_titel"></strong><span data-t="d_lokal_text"></span>
+        <span class="leise" id="es-lokal-stand" aria-live="polite"></span></div>
+      <label class="schalter"><input type="checkbox" data-einstellung="recaps_lokal"><span></span><b class="unsichtbar" data-t="d_lokal_titel"></b></label></div>
+    <p class="leise klein" data-t="d_cloud_text"></p>
+  </div>
+  <div class="karte">
+    <h2 data-t="Speicherplatz"></h2>
+    <p class="leise" id="es-speicher"></p>
+    <div class="knopfreihe"><button class="tw-btn tw-btn--secondary" id="es-ordner" type="button" data-t="Ordner öffnen"></button>
+      <button class="tw-btn tw-btn--secondary" id="es-lokal-entfernen" type="button" data-t="d_lokal_entfernen" hidden></button></div>
+  </div>
+  <details class="karte aufklapp" id="es-erweitert">
+    <summary><h2 data-t="d_erweitert"></h2></summary>
+    <div class="zeile"><div class="zeile__text"><strong data-t="d_verwaltung"></strong><span data-t="d_verwaltung_text"></span></div>
+      <button class="tw-btn tw-btn--secondary" id="es-verwaltung" type="button" data-t="d_oeffnen"></button></div>
+    <div class="zeile"><div class="zeile__text"><strong data-t="d_betriebsart"></strong><span data-t="d_betriebsart_text"></span></div>
+      <button class="tw-btn tw-btn--secondary" id="es-betrieb" type="button" data-t="d_zu_worker"></button></div>
+    <div class="zeile"><div class="zeile__text"><strong data-t="d_neu_installieren"></strong><span data-t="d_neu_installieren_text"></span></div>
+      <button class="tw-btn tw-btn--secondary" id="es-neu-installieren" type="button" data-t="d_neu_installieren_knopf"></button></div>
+    <div class="zeile"><div class="zeile__text"><strong data-t="d_beenden"></strong><span data-t="d_beenden_text"></span></div>
+      <button class="tw-btn tw-btn--secondary" id="es-beenden" type="button" data-t="d_beenden"></button></div>
+  </details>
+</section>
+
+<!-- ============================================================ Hilfe -->
+<section class="bereich" data-ansicht="hilfe" hidden>
+  <h1 data-t="d_hilfe"></h1>
+  <div class="karte">
+    <h2 data-t="d_stolpersteine"></h2>
+    <details class="aufklapp"><summary data-t="d_s1_frage"></summary><p data-t="d_s1_antwort"></p></details>
+    <details class="aufklapp"><summary data-t="d_s2_frage"></summary><p data-t="d_s2_antwort"></p></details>
+    <details class="aufklapp"><summary data-t="d_s3_frage"></summary><p data-t="d_s3_antwort"></p></details>
+    <details class="aufklapp"><summary data-t="d_s4_frage"></summary><p data-t="d_s4_antwort"></p></details>
+  </div>
+  <div class="karte">
+    <h2 data-t="d_weiter_hilfe"></h2>
+    <p class="leise" data-t="d_hilfe_datei_text"></p>
+    <div class="knopfreihe">
+      <button class="tw-btn tw-btn--primary" id="hi-datei" type="button" data-t="Hilfe-Datei erstellen"></button>
+      <button class="tw-btn tw-btn--secondary" id="hi-website" type="button" data-t="d_website"></button>
+      <button class="tw-btn tw-btn--secondary" id="hi-discord" type="button" data-t="d_discord" disabled></button>
+    </div>
+  </div>
+  <details class="karte aufklapp" id="hi-protokoll">
+    <summary><h2 data-t="d_was_zuletzt"></h2></summary>
+    <pre class="log" id="hi-log" tabindex="0"></pre>
+    <div class="knopfreihe"><button class="tw-btn tw-btn--secondary" id="hi-kopieren" type="button" data-t="Kopieren"></button>
+      <button class="tw-btn tw-btn--secondary" id="hi-ordner" type="button" data-t="Ordner öffnen"></button></div>
+  </details>
+</section>
+</main>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<!-- ============================================================ Rückfragen -->
+<dialog class="dialog" id="dialog" aria-labelledby="dialog-titel">
+  <h2 id="dialog-titel"></h2>
+  <div data-dialog="betrieb">
+    <p data-t="d_zu_worker_frage"></p>
+    <p class="leise klein" data-t="betrieb_zu_verbunden_folge"></p>
+    <label class="haken" id="betrieb-regel-zeile" hidden><input type="checkbox" id="betrieb-regel" checked><span data-t="betrieb_regel_entfernen"></span></label>
+  </div>
+  <div data-dialog="speichern">
+    <p class="leise" data-t="sicherung_speichern_text"></p>
+    <label class="feld"><span data-t="Passwort für die Sicherung"></span>
+      <input id="sich-passwort" type="password" autocomplete="new-password">
+      <span class="hilfe" data-t="sicherung_passwort_hilfe"></span></label>
+    <label class="feld"><span data-t="Passwort wiederholen"></span>
+      <input id="sich-passwort2" type="password" autocomplete="new-password"></label>
+  </div>
+  <div data-dialog="zurueck">
+    <p class="leise" data-t="sicherung_zurueck_text"></p>
+    <div class="zeile"><div class="zeile__text"><strong data-t="Datei"></strong><span id="zurueck-datei"></span></div>
+      <button class="tw-btn tw-btn--secondary" id="zurueck-waehlen" type="button" data-t="Datei wählen"></button></div>
+    <label class="feld"><span data-t="Passwort der Sicherung"></span>
+      <input id="zurueck-passwort" type="password" autocomplete="off"></label>
+  </div>
+  <div data-dialog="hilfe">
+    <p class="leise klein" data-t="hilfe_text"></p>
+    <textarea id="hilfe-vorschau" readonly spellcheck="false" aria-labelledby="dialog-titel"></textarea>
+  </div>
+  <div data-dialog="frage"><p id="frage-text"></p></div>
+  <div class="meldung meldung--fehler" id="dialog-fehler" role="alert" hidden></div>
+  <div class="knopfreihe knopfreihe--ende">
+    <button class="tw-btn tw-btn--quiet" id="dialog-abbrechen" type="button" data-t="Abbrechen"></button>
+    <button class="tw-btn tw-btn--primary" id="dialog-ok" type="button"></button>
+  </div>
+</dialog>
+<script src="bruecke.js"></script>
+<script src="texte.js"></script>
+<script src="desktop-texte.js"></script>
+<script src="desktop.js"></script>
+</body>
+</html>
