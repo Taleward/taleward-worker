@@ -1,0 +1,27 @@
+From ca277fc049829f08cbb8e998cfde23d1acdd96ec Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 09:56:01 +0200
+Subject: [PATCH 53/54] =?UTF-8?q?Worker:=20CUDA-Hilfspakete=20bei=20?=
+ =?UTF-8?q?=E2=80=9Enur=20Prozessor=E2=80=9C=20weglassen?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ taleward_worker/motor.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/taleward_worker/motor.py b/taleward_worker/motor.py
+index 072f203..e530c89 100644
+--- a/taleward_worker/motor.py
++++ b/taleward_worker/motor.py
+@@ -674,5 +674,5 @@ def anforderungen_aufteilen(text: str) -> tuple[str, str]:
+ PYTORCH_VERZEICHNIS = ("torch", "torchaudio", "torchvision")
+ # Nur für die Grafikkarte unter Linux nötig (bringt PyTorch von PyPI mit), bei „nur Prozessor“ weglassen
+-NUR_CUDA = ("nvidia-", "triton")
++NUR_CUDA = ("nvidia-", "triton", "cuda-")
+ # Ältere Server-Fassungen hatten imageio-ffmpeg nicht in uv.lock (wurde ohne feste Fassung nachinstalliert)
+ IMAGEIO_FFMPEG = """imageio-ffmpeg==0.6.0 \\
+-- 
+2.43.0
