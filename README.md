@@ -131,3 +131,7 @@ gelten wie im Server-Repository: [CONTRIBUTING.md](https://github.com/Taleward/t
 ## Lizenz
 
 AGPL-3.0, siehe [LICENSE](LICENSE). Name und Logo „Taleward“ sind nicht Teil der freien Lizenz des Quelltexts.
+
+„Taleward“ ist beim Deutschen Patent- und Markenamt als Wortmarke angemeldet (Aktenzeichen 302026258979.0). Wer
+eine veränderte Fassung verbreitet oder anderen anbietet, gibt ihr einen eigenen Namen und eigene Zeichen. Erlaubt
+bleibt, sachlich auf Taleward hinzuweisen, etwa „beruht auf Taleward“.
