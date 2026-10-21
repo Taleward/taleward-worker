@@ -1,0 +1,151 @@
+From 0a40e031b0910b91e264c65d1c1cc6d0ab523265 Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Wed, 21 Oct 2026 21:28:39 +0200
+Subject: [PATCH] Worker 0.3.21
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Taleward Desktop: Mikrofon für die App im Rahmen. WebView2 meldet Anfragen aus dem Rahmen mit der Herkunft
+der Oberfläche, darum entscheidet jetzt der App-Rahmen selbst (Name beim Anlegen); die Verwaltung bekommt
+das Mikrofon weiterhin nie.
+---
+ pyproject.toml                  |  2 +-
+ taleward_worker/__init__.py     |  2 +-
+ taleward_worker/fenster.py      | 32 ++++++++++++++++++++++++++++++++
+ taleward_worker/ui/desktop.html |  2 +-
+ tests/test_worker_0321.py       | 25 +++++++++++++++++++++++++
+ uv.lock                         |  2 +-
+ 6 files changed, 61 insertions(+), 4 deletions(-)
+ create mode 100644 tests/test_worker_0321.py
+
+diff --git a/pyproject.toml b/pyproject.toml
+index 3d50478..778c87a 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-worker"
+-version = "0.3.20"
++version = "0.3.21"
+ description = "Taleward Worker – verarbeitet Aufnahmen für einen Taleward-Server auf dem eigenen PC mit Grafikkarte"
+ license = "AGPL-3.0-only"
+diff --git a/taleward_worker/__init__.py b/taleward_worker/__init__.py
+index 1b3a2f4..a20e994 100644
+--- a/taleward_worker/__init__.py
++++ b/taleward_worker/__init__.py
+@@ -4,5 +4,5 @@ Die App selbst ist klein. Das KI-Paket (Taleward-Server mit WhisperX, einige GB)
+ passender Fassung zum verbundenen Server und startet es als Unterprozess („chronik worker --app“).
+ """
+-VERSION = "0.3.20"
++VERSION = "0.3.21"
+ REPO = "Taleward/taleward-server"        # Server-Code = KI-Paket (engine-requirements.txt, Tags v…)
+ APP_REPO = "Taleward/taleward-worker"   # diese App
+diff --git a/taleward_worker/fenster.py b/taleward_worker/fenster.py
+index 003f74e..e6b3e35 100644
+--- a/taleward_worker/fenster.py
++++ b/taleward_worker/fenster.py
+@@ -157,4 +157,14 @@ def mikrofon_erlaubt(uri) -> bool:
+ 
+ 
++# Name des Rahmens mit der App in Taleward Desktop (`<iframe name=…>` in ui/desktop.html)
++APP_RAHMEN = "taleward-app"
++
++
++def mikrofon_im_app_rahmen(uri, herkunft: str) -> bool:
++    """Mikrofon-Anfrage aus dem App-Rahmen: WebView2 nennt dabei je nach Fassung die Herkunft der App oder – weil der
++    Rahmen das Recht über `allow="microphone"` von der Oberfläche geliehen bekommt – die Herkunft der Oberfläche."""
++    return mikrofon_erlaubt(uri) or von_huelle(uri, herkunft)
++
++
+ INTERNE_NACHRICHTEN = frozenset()  # pywebview-eigene Namen (Alarm, Fenster ziehen, Zustand …) braucht die Oberfläche nicht
+ 
+@@ -289,4 +299,22 @@ def _abdichten(w, form, herkunft: str, adresse: str) -> None:
+         args.State = CoreWebView2PermissionState.Allow if erlaubt else CoreWebView2PermissionState.Deny
+ 
++    def rahmen_erzeugt(_sender, args):
++        """Nur der App-Rahmen darf das Mikrofon nutzen. Anfragen aus Rahmen meldet WebView2 mit der Herkunft der
++        Oberfläche – darum hier am Rahmen selbst entscheiden (der Name gilt so, wie er beim Anlegen war)."""
++        frame = args.Frame
++        if str(frame.Name or "") != APP_RAHMEN:
++            return
++
++        def app_berechtigung(_s, a):
++            erlaubt = (a.PermissionKind == CoreWebView2PermissionKind.Microphone
++                       and mikrofon_im_app_rahmen(str(a.Uri), herkunft))
++            a.State = CoreWebView2PermissionState.Allow if erlaubt else CoreWebView2PermissionState.Deny
++            a.Handled = True
++
++        try:
++            frame.PermissionRequested += app_berechtigung
++        except AttributeError:  # sehr alte WebView2 – dann bleibt das Mikrofon im Rahmen gesperrt
++            log.warning("Programmfenster: diese WebView2 kennt keine Berechtigungen je Rahmen")
++
+     def fremdes_schema(_sender, args):
+         args.Cancel = True  # mailto:, ms-settings:, … – nie aus der App heraus starten
+@@ -296,4 +324,8 @@ def _abdichten(w, form, herkunft: str, adresse: str) -> None:
+     core.FrameNavigationStarting += rahmen
+     core.PermissionRequested += berechtigung
++    try:
++        core.FrameCreated += rahmen_erzeugt
++    except AttributeError:
++        log.warning("Programmfenster: diese WebView2 kennt FrameCreated nicht")
+     try:
+         core.LaunchingExternalUriScheme += fremdes_schema
+diff --git a/taleward_worker/ui/desktop.html b/taleward_worker/ui/desktop.html
+index b7a3dbe..2494383 100644
+--- a/taleward_worker/ui/desktop.html
++++ b/taleward_worker/ui/desktop.html
+@@ -48,5 +48,5 @@
+     </div>
+   </div>
+-  <iframe id="rahmen-app" title="Taleward" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals" allow="microphone; clipboard-write" referrerpolicy="no-referrer"></iframe>
++  <iframe id="rahmen-app" name="taleward-app" title="Taleward" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals" allow="microphone; clipboard-write" referrerpolicy="no-referrer"></iframe>
+ </section>
+ 
+diff --git a/tests/test_worker_0321.py b/tests/test_worker_0321.py
+new file mode 100644
+index 0000000..f3c49e1
+--- /dev/null
++++ b/tests/test_worker_0321.py
+@@ -0,0 +1,25 @@
++"""Worker 0.3.21: Mikrofon in Taleward Desktop – die App im Rahmen bekommt es, die Verwaltung nie."""
++import re
++from pathlib import Path
++
++UI = Path(__file__).resolve().parent.parent / "taleward_worker" / "ui"
++
++
++def test_mikrofon_im_app_rahmen():
++    """Taleward Desktop: Die App läuft im Rahmen; WebView2 meldet ihre Mikrofon-Anfrage mit der Herkunft der
++    Oberfläche. Nur der App-Rahmen (Name beim Anlegen) bekommt das Mikrofon, die Verwaltung nie."""
++    from taleward_worker import fenster
++
++    huelle = "http://localhost:49731"
++    assert fenster.mikrofon_im_app_rahmen("http://localhost:49731/", huelle)
++    assert fenster.mikrofon_im_app_rahmen("http://localhost:8000/app/", huelle)
++    assert not fenster.mikrofon_im_app_rahmen("http://localhost:8000/verwaltung/", huelle)
++    assert not fenster.mikrofon_im_app_rahmen("http://localhost:49732/", huelle)
++    assert not fenster.mikrofon_im_app_rahmen("https://example.org/", huelle)
++    html = (UI / "desktop.html").read_text(encoding="utf-8")
++    app = re.search(r'<iframe id="rahmen-app"[^>]*>', html).group(0)
++    assert f'name="{fenster.APP_RAHMEN}"' in app and 'allow="microphone' in app
++    verwaltung = re.search(r'<iframe id="rahmen-verwaltung"[^>]*>', html).group(0)
++    assert "name=" not in verwaltung and "microphone" not in verwaltung
++    quelle = (Path(fenster.__file__)).read_text(encoding="utf-8")
++    assert "core.FrameCreated += rahmen_erzeugt" in quelle and "a.Handled = True" in quelle
+diff --git a/uv.lock b/uv.lock
+index d541b0f..bd77951 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -677,5 +677,5 @@ wheels = [
+ [[package]]
+ name = "taleward-worker"
+-version = "0.3.20"
++version = "0.3.21"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
