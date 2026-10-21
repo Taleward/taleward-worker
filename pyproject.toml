@@ -1,6 +1,6 @@
 [project]
 name = "taleward-worker"
-version = "0.3.19"
+version = "0.3.20"
 description = "Taleward Worker – verarbeitet Aufnahmen für einen Taleward-Server auf dem eigenen PC mit Grafikkarte"
 license = "AGPL-3.0-only"
 requires-python = ">=3.11,<3.14"
@@ -13,6 +13,10 @@ dependencies = [
     "platformdirs>=4",
     "truststore>=0.10",  # Zertifikate aus dem Windows-/macOS-Speicher (Virenscanner, Firmen-Proxy)
     "zstandard>=0.22; sys_platform != 'win32'",  # Ollama für Linux kommt als .tar.zst
+    # „Passwort vergessen“: Bestätigung mit Windows Hello
+    "winrt-Windows.Security.Credentials.UI==3.2.1; sys_platform == 'win32'",
+    "winrt-Windows.Foundation==3.2.1; sys_platform == 'win32'",
+    "winrt-runtime==3.2.1; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

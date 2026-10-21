@@ -582,6 +582,11 @@
         const r = await riskant("sicherung_zurueckspielen", $("#zurueck-passwort").value);
         if (!r || !r.ok) return dialogFehler(fehlerText("sich_f_", r && r.fehler));
         dialogZu();
+      } else if (dialogArt === "passwort") {
+        const r = await riskant("passwort_neu", $("#pw-konto").value, $("#pw-neu").value, $("#pw-neu2").value, sprache);
+        if (!r || !r.ok) return dialogFehler(fehlerText("pw_f_", r && r.fehler));
+        dialogZu(); toast(t("d_pw_fertig"));
+        if (bereich === "verwaltung") { const f = $("#rahmen-verwaltung"); if (f.src) f.src = f.src; }
       } else if (dialogArt === "hilfe") {
         const r = await api.hilfe_speichern();
         if (!r.ok) { if (r.fehler !== "abgebrochen") dialogFehler(t("hilfe_f")); return; }
@@ -678,6 +683,16 @@
     $("#es-lokal-entfernen").onclick = () => fragen(t("d_lokal_entfernen"), t("d_lokal_entfernen_frage"), t("d_lokal_entfernen"),
       async () => { await riskant("ollama_entfernen"); speicherLaden(); });
     $("#es-verwaltung").onclick = () => bereichZeigen("verwaltung");
+    const passwortDialog = async () => {
+      const r = await api.passwort_konten();
+      const auswahl = $("#pw-konto");
+      auswahl.replaceChildren(...((r && r.konten) || []).map((n) => { const o = document.createElement("option"); o.value = n; o.textContent = n; return o; }));
+      dialogOeffnen("passwort", t("d_pw_vergessen"), t("d_pw_setzen"));
+      if (!r || !r.ok) { dialogFehler(fehlerText("pw_f_", r && r.fehler)); $("#dialog-ok").disabled = true; }
+      else if (!r.konten.length) { dialogFehler(t("pw_f_unbekannt")); $("#dialog-ok").disabled = true; }
+    };
+    $("#es-passwort").onclick = passwortDialog;
+    $("#verwaltung-passwort").onclick = passwortDialog;
     $("#es-betrieb").onclick = () => {
       const netz = (S.taleward && S.taleward.netz) || {};
       $("#betrieb-regel-zeile").hidden = !(netz.noetig && netz.vorhanden);
@@ -707,7 +722,7 @@
     $("#dialog-ok").onclick = dialogBestaetigen;
     $("#dialog-abbrechen").onclick = dialogZu;
     $("#dialog").addEventListener("close", () => {
-      ["#sich-passwort", "#sich-passwort2", "#zurueck-passwort"].forEach((id) => { $(id).value = ""; });
+      ["#sich-passwort", "#sich-passwort2", "#zurueck-passwort", "#pw-neu", "#pw-neu2"].forEach((id) => { $(id).value = ""; });
       $("#hilfe-vorschau").value = ""; dialogArt = null; frageAktion = null;
     });
     $$("#dialog input").forEach((el) => el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); dialogBestaetigen(); } }));

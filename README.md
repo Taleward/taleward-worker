@@ -13,7 +13,7 @@ Der Server liegt unter [taleward-server](https://github.com/Taleward/taleward-se
 
 ### Windows
 
-`TalewardWorker-Setup.exe` von der [Release-Seite](https://github.com/Taleward/taleward-worker/releases/latest)
+`TalewardWorker-Setup.exe` von der [Release-Seite](https://github.com/Taleward/taleward-worker/releases)
 herunterladen und starten. Administratorrechte sind nicht nötig.
 
 - Windows 10 (ab 1809) oder 11

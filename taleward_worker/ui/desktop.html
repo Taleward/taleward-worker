@@ -55,6 +55,7 @@
   <div class="rahmen__kopf">
     <button class="tw-btn tw-btn--quiet" id="verwaltung-zurueck" type="button" data-t="d_zurueck_einstellungen"></button>
     <strong data-t="d_verwaltung"></strong>
+    <button class="tw-btn tw-btn--quiet rahmen__rechts" id="verwaltung-passwort" type="button" data-t="d_pw_vergessen"></button>
   </div>
   <div class="rahmen__hinweis" id="verwaltung-hinweis" hidden>
     <div class="karte">
@@ -221,6 +222,8 @@
     <summary><h2 data-t="d_erweitert"></h2></summary>
     <div class="zeile"><div class="zeile__text"><strong data-t="d_verwaltung"></strong><span data-t="d_verwaltung_text"></span></div>
       <button class="tw-btn tw-btn--secondary" id="es-verwaltung" type="button" data-t="d_oeffnen"></button></div>
+    <div class="zeile"><div class="zeile__text"><strong data-t="d_pw_vergessen"></strong><span data-t="d_pw_text"></span></div>
+      <button class="tw-btn tw-btn--secondary" id="es-passwort" type="button" data-t="d_pw_knopf"></button></div>
     <div class="zeile"><div class="zeile__text"><strong data-t="d_betriebsart"></strong><span data-t="d_betriebsart_text"></span></div>
       <button class="tw-btn tw-btn--secondary" id="es-betrieb" type="button" data-t="d_zu_worker"></button></div>
     <div class="zeile"><div class="zeile__text"><strong data-t="d_neu_installieren"></strong><span data-t="d_neu_installieren_text"></span></div>
@@ -282,6 +285,16 @@
       <button class="tw-btn tw-btn--secondary" id="zurueck-waehlen" type="button" data-t="Datei wählen"></button></div>
     <label class="feld"><span data-t="Passwort der Sicherung"></span>
       <input id="zurueck-passwort" type="password" autocomplete="off"></label>
+  </div>
+  <div data-dialog="passwort">
+    <p class="leise" data-t="d_pw_dialog_text"></p>
+    <label class="feld"><span data-t="d_pw_konto"></span>
+      <select id="pw-konto"></select></label>
+    <label class="feld"><span data-t="d_pw_neu"></span>
+      <input id="pw-neu" type="password" autocomplete="new-password">
+      <span class="hilfe" data-t="d_pw_neu_hilfe"></span></label>
+    <label class="feld"><span data-t="Passwort wiederholen"></span>
+      <input id="pw-neu2" type="password" autocomplete="new-password"></label>
   </div>
   <div data-dialog="hilfe">
     <p class="leise klein" data-t="hilfe_text"></p>

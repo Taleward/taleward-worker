@@ -138,3 +138,4 @@ body.d.schmal .toast { left:calc(50% + 36px); }
 /* Messwerte des letzten Auftrags (Verarbeitung → Leistung) */
 .liste-schlicht { list-style:none; margin:0 0 16px; padding:0; }
 .liste-schlicht li { padding:2px 0; }
+.rahmen__rechts { margin-left:auto; }

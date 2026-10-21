@@ -14,7 +14,7 @@ if uv.exists():
     daten.append((str(uv), "taleward_worker/bin"))
 
 versteckt = collect_submodules("pystray") + ["webview.platforms.winforms", "webview.platforms.edgechromium"] \
-    if windows else collect_submodules("pystray") + ["webview.platforms.qt"]
+    + collect_submodules("winrt") if windows else collect_submodules("pystray") + ["webview.platforms.qt"]
 
 a = Analysis([str(wurzel / "taleward_worker" / "__main__.py")], pathex=[str(wurzel)], datas=daten,
              hiddenimports=versteckt, excludes=["tkinter", "matplotlib", "numpy"], noarchive=False)

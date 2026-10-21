@@ -17,7 +17,7 @@ import webbrowser
 from pathlib import Path
 
 from taleward_worker import (VERSION, autostart, einzelplatz, fenster, hardware, huelle, mitnehmen, motor,
-                             netzfreigabe, ollama, pfade, selbstupdate, server, serverupdate)
+                             netzfreigabe, ollama, passwort, pfade, selbstupdate, server, serverupdate)
 from taleward_worker.dienst import Dienst
 from taleward_worker.einstellungen import Einstellungen
 
@@ -171,6 +171,35 @@ class Api:
         if not self._app.e.einzelplatz:
             return {"ok": False, "grund": "aktuell"}
         return self._app.ep_update.jetzt()
+
+    # -- Passwort vergessen (nur „Alles auf diesem PC“, mit Windows Hello)
+    def passwort_konten(self) -> dict:
+        a = self._app
+        if not a.e.einzelplatz or not a.e.konto_angelegt:
+            return {"ok": False, "fehler": "unbekannt"}
+        if a.ep_update.laeuft() or a.sicherung.laeuft():
+            return {"ok": False, "fehler": "beschaeftigt"}
+        return passwort.konten(a.ep_update.cli)
+
+    def passwort_neu(self, wert: str, name: str, neu: str, neu2: str, sprache: str = "de") -> dict:
+        a = self._app
+        if not self._gilt(wert):
+            return {"ok": False, "fehler": "pruefwert"}
+        if not a.e.einzelplatz or not a.e.konto_angelegt:
+            return {"ok": False, "fehler": "unbekannt"}
+        if len(neu or "") < passwort.MIN_PASSWORT:
+            return {"ok": False, "fehler": "password_too_short"}
+        if neu != neu2:
+            return {"ok": False, "fehler": "passwoerter_ungleich"}
+        if a.ep_update.laeuft() or a.sicherung.laeuft():
+            return {"ok": False, "fehler": "beschaeftigt"}
+        r = passwort.neu_setzen(a.ep_update.cli, str(name or ""), neu, sprache=str(sprache or "de"))
+        try:
+            a.dienst.protokoll.schreiben("Passwort neu gesetzt" if r.get("ok") else
+                                         f"Passwort nicht neu gesetzt ({r.get('fehler')})")
+        except Exception:  # noqa: BLE001 – Protokoll ist Beiwerk
+            pass
+        return r
 
     # -- Sicherung und Hilfe-Datei
     def sicherung_speichern(self, passwort: str, passwort2: str) -> dict:

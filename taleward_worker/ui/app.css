@@ -75,7 +75,7 @@ main { flex:1; overflow:auto; padding:22px 20px 28px; }
 /* Formulare */
 .feld { display:grid; gap:4px; margin-bottom:14px; font:500 14px/20px var(--font-sans); }
 .feld input, .feld select { font:400 16px/24px var(--font-sans); color:var(--ink); background:var(--paper);
-  border:1.5px solid var(--line-strong); border-radius:var(--radius-sm); padding:8px 12px; width:100%; }
+  border:1.5px solid var(--line-strong); border-radius:var(--radius-sm); padding:8px 12px; width:100%; min-height:48px; }
 .feld input.code { font:700 22px/30px ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing:.12em;
   text-transform:uppercase; text-align:center; }
 .hilfe { font:400 13px/18px var(--font-sans); color:var(--ink-muted); }
