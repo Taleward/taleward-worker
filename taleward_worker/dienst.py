@@ -6,6 +6,7 @@ Dienst ihn mit wachsender Wartezeit neu. Während eines Auftrags verhindert er d
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -120,26 +121,42 @@ MESS_TEXTE = ("art", "modell", "quantisierung", "karte")
 MESS_STUFEN = ("einlesen", "erkennung", "ausrichtung", "sprechertrennung", "auswertung")
 
 
+def _messzahl(v) -> bool:
+    """Endliche Zahl 0 ≤ v < 1e7 (auch riesige Ganzzahlen und inf/nan sicher abweisen)."""
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return False
+    try:
+        f = float(v)
+    except OverflowError:
+        return False
+    return math.isfinite(f) and 0 <= f < 1e7
+
+
+# Steuer- und Richtungszeichen: würden sonst Zusatzzeilen ins Protokoll (und die Hilfe-Datei) schreiben
+_UNSICHTBAR = re.compile("[" + "".join(f"{chr(a)}-{chr(b)}" for a, b in (
+    (0x00, 0x1F), (0x7F, 0x9F), (0x61C, 0x61C), (0x200E, 0x200F), (0x202A, 0x202E), (0x2066, 0x2069))) + "]")
+
+
 def messwerte_bereinigen(m) -> dict:
     """Messwerte des letzten Auftrags (vom KI-Paket): nur bekannte Felder mit einfachen Werten."""
     if not isinstance(m, dict):
         return {}
     aus: dict = {}
     for k in MESS_ZAHLEN:
-        v = m.get(k)
-        if isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v < 1e7:
-            aus[k] = round(float(v), 1)
+        if _messzahl(m.get(k)):
+            aus[k] = round(float(m[k]), 1)
     for k in MESS_TEXTE:
         v = m.get(k)
-        if isinstance(v, str) and v.strip():
-            aus[k] = v.strip()[:80]
+        if isinstance(v, str):
+            v = " ".join(_UNSICHTBAR.sub(" ", v).split())[:80]
+            if v:
+                aus[k] = v
     for k in ("ganzAufKarte", "abgestuft"):
         if isinstance(m.get(k), bool):
             aus[k] = m[k]
     stufen = m.get("stufen")
     if isinstance(stufen, dict):
-        s = {k: round(float(stufen[k]), 1) for k in MESS_STUFEN
-             if isinstance(stufen.get(k), (int, float)) and not isinstance(stufen.get(k), bool) and stufen[k] >= 0}
+        s = {k: round(float(stufen[k]), 1) for k in MESS_STUFEN if _messzahl(stufen.get(k))}
         if s:
             aus["stufen"] = s
     return aus
