@@ -127,6 +127,26 @@
     // Rahmen darf nie durch Neuladen abbrechen)
     if (!titel && !f.getAttribute("src")) f.src = APP + appZiel;
   }
+  // Absprache mit der App im Rahmen (nur postMessage): Die App meldet sich mit „hello“, die Oberfläche sagt, was sie
+  // anbietet. „mic-settings“ öffnet genau die Windows-Seite für das Mikrofon – ohne einen Wert aus der Nachricht.
+  const APP_HERKUNFT = "http://localhost:8000";
+  let micZuletzt = 0;
+  function appBegruessen() {
+    const f = $("#rahmen-app");
+    if (f.contentWindow) f.contentWindow.postMessage({ taleward: "desktop", can: ["mic-settings"] }, APP_HERKUNFT);
+  }
+  window.addEventListener("message", (e) => {
+    const f = $("#rahmen-app");
+    if (e.origin !== APP_HERKUNFT || !f || e.source !== f.contentWindow) return;
+    const d = e.data;
+    if (!d || typeof d !== "object" || typeof d.taleward !== "string") return;
+    if (d.taleward === "hello") appBegruessen();
+    else if (d.taleward === "mic-settings" && Date.now() - micZuletzt > 2000) {
+      micZuletzt = Date.now();
+      if (api) api.mikrofon_einstellungen();
+    }
+  });
+  $("#rahmen-app").addEventListener("load", appBegruessen);
   // Verwaltung im Rahmen erst, wenn der Server läuft und neu genug ist (ab 0.4.112 darf die Oberfläche sie einbetten) –
   // sonst zeigt WebView2 nur „Verbindung verweigert“. Bis dahin ein Hinweis mit Update und dem Weg über den Browser.
   function verwaltungHinweis() {

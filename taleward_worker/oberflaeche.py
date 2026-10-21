@@ -433,6 +433,15 @@ class Api:
         else:
             subprocess.Popen(["xdg-open", ziel], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+    def mikrofon_einstellungen(self) -> None:
+        """Nur die Windows-Seite „Datenschutz → Mikrofon“ (für die App im Rahmen, wenn Windows das Mikrofon sperrt).
+        Höchstens einmal je 2 s."""
+        jetzt = time.monotonic()
+        if sys.platform != "win32" or jetzt - getattr(self, "_mic_zuletzt", -10.0) < 2:
+            return
+        self._mic_zuletzt = jetzt
+        os.startfile("ms-settings:privacy-microphone")  # noqa: S606
+
     def link_oeffnen(self, url: str) -> None:
         """Nur https mit Host, ohne Zugangsdaten, Steuerzeichen und Backslashes (fenster.web_adresse)."""
         if isinstance(url, str) and url.startswith("https://") and fenster.web_adresse(url):
