@@ -37,6 +37,14 @@ BESCHAEFTIGT_WARTEN_S = 1800    # kam beim Anhalten doch noch Arbeit dazu: in ei
 LAEUFT = ("vorbereiten", "sichern", "tauschen", "starten", "pruefen", "zurueck")
 
 
+def grund_kurz(inst) -> str:
+    """Letzte aussagekräftige Zeile des Fehlers fürs Protokoll (eine Zeile, höchstens 200 Zeichen) – sonst sieht man
+    nur „installation“ und muss die Hilfe-Datei anfordern."""
+    zeilen = [z.strip() for z in str(getattr(inst, "fehlertext", "") or "").splitlines() if z.strip()]
+    zeilen = [z for z in zeilen if not z.startswith("$ ")]
+    return f" ({zeilen[-1][:200]})" if zeilen else ""
+
+
 class ServerUpdate:
     def __init__(self, app):
         self.app = app                  # WorkerApp: e, server, dienst, installation
@@ -195,7 +203,8 @@ class ServerUpdate:
                 self.phase, self.fehler = "verschoben", "beschaeftigt"
                 self._protokoll(f"Update auf {self.neu} verschoben: {getattr(inst, 'fehlertext', '')} – später noch einmal")
             else:
-                self._protokoll(f"Update auf {self.neu} vorbereitet nicht: {inst.fehler} – Taleward läuft unverändert")
+                self._protokoll(f"Update auf {self.neu} vorbereitet nicht: {inst.fehler}{grund_kurz(inst)} – Taleward "
+                                "läuft unverändert")
             return
         if gesichert:
             # Tausch mittendrin gescheitert – der neue Code lief nie, die Daten sind unberührt

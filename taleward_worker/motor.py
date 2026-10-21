@@ -198,6 +198,7 @@ class Installation:
             self.phase, self.fehler, self.fehlertext = "fehler", "unerwartet", f"{type(e).__name__}: {e}"
         finally:
             shutil.rmtree(pfade.basis() / "cache", ignore_errors=True)  # spart einige GB
+            shutil.rmtree(pfade.basis() / "listen", ignore_errors=True)
 
     def _umgebung(self) -> dict:
         env = saubere_umgebung()
@@ -341,7 +342,9 @@ class Installation:
         festgelegt (steht im Protokoll). Im Testmodus nur die Grundpakete und ffmpeg, ohne PyTorch."""
         ordner = pfade.basis() / "cache"
         ordner.mkdir(parents=True, exist_ok=True)
-        basis, ki = pruefsummen(q, umgebung=self._umgebung(), ordner=ordner / "lock")
+        # Projektordner für uv export außerhalb des uv-Zwischenspeichers (UV_CACHE_DIR = cache) – neuere uv lehnen ein
+        # Projekt im Zwischenspeicher ab („project directory is inside the cache directory“)
+        basis, ki = pruefsummen(q, umgebung=self._umgebung(), ordner=pfade.basis() / "listen")
         if self.testmodus:
             geprueft, pytorch = pruefsummen_aufteilen(basis)[0], ""
             ffmpeg = [b for n, b in eintraege(ki) if n == "imageio-ffmpeg"]
