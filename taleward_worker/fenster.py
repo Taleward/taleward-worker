@@ -156,6 +156,16 @@ def mikrofon_erlaubt(uri) -> bool:
     return pfad in ("", "/") or pfad == "/app" or pfad.startswith("/app/")
 
 
+# Name des Rahmens mit der App in Taleward Desktop (`<iframe name=…>` in ui/desktop.html)
+APP_RAHMEN = "taleward-app"
+
+
+def mikrofon_im_app_rahmen(uri, herkunft: str) -> bool:
+    """Mikrofon-Anfrage aus dem App-Rahmen: WebView2 nennt dabei je nach Fassung die Herkunft der App oder – weil der
+    Rahmen das Recht über `allow="microphone"` von der Oberfläche geliehen bekommt – die Herkunft der Oberfläche."""
+    return mikrofon_erlaubt(uri) or von_huelle(uri, herkunft)
+
+
 INTERNE_NACHRICHTEN = frozenset()  # pywebview-eigene Namen (Alarm, Fenster ziehen, Zustand …) braucht die Oberfläche nicht
 
 
@@ -288,6 +298,24 @@ def _abdichten(w, form, herkunft: str, adresse: str) -> None:
         erlaubt = mikrofon_erlaubt(str(args.Uri)) and args.PermissionKind == CoreWebView2PermissionKind.Microphone
         args.State = CoreWebView2PermissionState.Allow if erlaubt else CoreWebView2PermissionState.Deny
 
+    def rahmen_erzeugt(_sender, args):
+        """Nur der App-Rahmen darf das Mikrofon nutzen. Anfragen aus Rahmen meldet WebView2 mit der Herkunft der
+        Oberfläche – darum hier am Rahmen selbst entscheiden (der Name gilt so, wie er beim Anlegen war)."""
+        frame = args.Frame
+        if str(frame.Name or "") != APP_RAHMEN:
+            return
+
+        def app_berechtigung(_s, a):
+            erlaubt = (a.PermissionKind == CoreWebView2PermissionKind.Microphone
+                       and mikrofon_im_app_rahmen(str(a.Uri), herkunft))
+            a.State = CoreWebView2PermissionState.Allow if erlaubt else CoreWebView2PermissionState.Deny
+            a.Handled = True
+
+        try:
+            frame.PermissionRequested += app_berechtigung
+        except AttributeError:  # sehr alte WebView2 – dann bleibt das Mikrofon im Rahmen gesperrt
+            log.warning("Programmfenster: diese WebView2 kennt keine Berechtigungen je Rahmen")
+
     def fremdes_schema(_sender, args):
         args.Cancel = True  # mailto:, ms-settings:, … – nie aus der App heraus starten
         log.info("Programmfenster: fremdes Schema nicht geöffnet (%.20s…)", str(args.Uri))
@@ -295,6 +323,10 @@ def _abdichten(w, form, herkunft: str, adresse: str) -> None:
     core.NavigationStarting += navigation
     core.FrameNavigationStarting += rahmen
     core.PermissionRequested += berechtigung
+    try:
+        core.FrameCreated += rahmen_erzeugt
+    except AttributeError:
+        log.warning("Programmfenster: diese WebView2 kennt FrameCreated nicht")
     try:
         core.LaunchingExternalUriScheme += fremdes_schema
     except AttributeError:  # ältere WebView2: fragt dann selbst nach, bevor sie etwas startet
