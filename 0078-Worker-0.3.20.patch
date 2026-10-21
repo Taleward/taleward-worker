@@ -1,0 +1,524 @@
+From a79eb525cce92768f1ea0aa6f7b7e35f50dbd42e Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Wed, 21 Oct 2026 21:01:53 +0200
+Subject: [PATCH] Worker 0.3.20
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Passwort vergessen bei Alles auf diesem PC: erst Windows Hello, dann das neue Passwort über die
+Standardeingabe an den Server (ab 0.4.118). Ohne Bestätigung wird nichts gesetzt. Auswahlfelder 48 px hoch,
+README verlinkt die Release-Liste statt latest.
+---
+ README.md                           |  2 +-
+ packaging/taleward-worker.spec      |  2 +-
+ pyproject.toml                      |  6 +-
+ taleward_worker/__init__.py         |  2 +-
+ taleward_worker/oberflaeche.py      | 31 +++++++++-
+ taleward_worker/passwort.py         | 94 +++++++++++++++++++++++++++++
+ taleward_worker/ui/app.css          |  2 +-
+ taleward_worker/ui/desktop-texte.js | 30 +++++++++
+ taleward_worker/ui/desktop.css      |  1 +
+ taleward_worker/ui/desktop.html     | 13 ++++
+ taleward_worker/ui/desktop.js       | 17 +++++-
+ tests/test_worker_0320.py           | 64 ++++++++++++++++++++
+ uv.lock                             | 68 ++++++++++++++++++++-
+ 13 files changed, 324 insertions(+), 8 deletions(-)
+ create mode 100644 taleward_worker/passwort.py
+ create mode 100644 tests/test_worker_0320.py
+
+diff --git a/README.md b/README.md
+index 45a9cf3..55d1e81 100644
+--- a/README.md
++++ b/README.md
+@@ -14,5 +14,5 @@ Der Server liegt unter [taleward-server](https://github.com/Taleward/taleward-se
+ ### Windows
+ 
+-`TalewardWorker-Setup.exe` von der [Release-Seite](https://github.com/Taleward/taleward-worker/releases/latest)
++`TalewardWorker-Setup.exe` von der [Release-Seite](https://github.com/Taleward/taleward-worker/releases)
+ herunterladen und starten. Administratorrechte sind nicht nötig.
+ 
+diff --git a/packaging/taleward-worker.spec b/packaging/taleward-worker.spec
+index 1a10045..7f6e5ee 100644
+--- a/packaging/taleward-worker.spec
++++ b/packaging/taleward-worker.spec
+@@ -15,5 +15,5 @@ if uv.exists():
+ 
+ versteckt = collect_submodules("pystray") + ["webview.platforms.winforms", "webview.platforms.edgechromium"] \
+-    if windows else collect_submodules("pystray") + ["webview.platforms.qt"]
++    + collect_submodules("winrt") if windows else collect_submodules("pystray") + ["webview.platforms.qt"]
+ 
+ a = Analysis([str(wurzel / "taleward_worker" / "__main__.py")], pathex=[str(wurzel)], datas=daten,
+diff --git a/pyproject.toml b/pyproject.toml
+index 07a999c..3d50478 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-worker"
+-version = "0.3.19"
++version = "0.3.20"
+ description = "Taleward Worker – verarbeitet Aufnahmen für einen Taleward-Server auf dem eigenen PC mit Grafikkarte"
+ license = "AGPL-3.0-only"
+@@ -14,4 +14,8 @@ dependencies = [
+     "truststore>=0.10",  # Zertifikate aus dem Windows-/macOS-Speicher (Virenscanner, Firmen-Proxy)
+     "zstandard>=0.22; sys_platform != 'win32'",  # Ollama für Linux kommt als .tar.zst
++    # „Passwort vergessen“: Bestätigung mit Windows Hello
++    "winrt-Windows.Security.Credentials.UI==3.2.1; sys_platform == 'win32'",
++    "winrt-Windows.Foundation==3.2.1; sys_platform == 'win32'",
++    "winrt-runtime==3.2.1; sys_platform == 'win32'",
+ ]
+ 
+diff --git a/taleward_worker/__init__.py b/taleward_worker/__init__.py
+index 5ce3cc4..1b3a2f4 100644
+--- a/taleward_worker/__init__.py
++++ b/taleward_worker/__init__.py
+@@ -4,5 +4,5 @@ Die App selbst ist klein. Das KI-Paket (Taleward-Server mit WhisperX, einige GB)
+ passender Fassung zum verbundenen Server und startet es als Unterprozess („chronik worker --app“).
+ """
+-VERSION = "0.3.19"
++VERSION = "0.3.20"
+ REPO = "Taleward/taleward-server"        # Server-Code = KI-Paket (engine-requirements.txt, Tags v…)
+ APP_REPO = "Taleward/taleward-worker"   # diese App
+diff --git a/taleward_worker/oberflaeche.py b/taleward_worker/oberflaeche.py
+index b25dd16..fae82a6 100644
+--- a/taleward_worker/oberflaeche.py
++++ b/taleward_worker/oberflaeche.py
+@@ -18,5 +18,5 @@ from pathlib import Path
+ 
+ from taleward_worker import (VERSION, autostart, einzelplatz, fenster, hardware, huelle, mitnehmen, motor,
+-                             netzfreigabe, ollama, pfade, selbstupdate, server, serverupdate)
++                             netzfreigabe, ollama, passwort, pfade, selbstupdate, server, serverupdate)
+ from taleward_worker.dienst import Dienst
+ from taleward_worker.einstellungen import Einstellungen
+@@ -173,4 +173,33 @@ class Api:
+         return self._app.ep_update.jetzt()
+ 
++    # -- Passwort vergessen (nur „Alles auf diesem PC“, mit Windows Hello)
++    def passwort_konten(self) -> dict:
++        a = self._app
++        if not a.e.einzelplatz or not a.e.konto_angelegt:
++            return {"ok": False, "fehler": "unbekannt"}
++        if a.ep_update.laeuft() or a.sicherung.laeuft():
++            return {"ok": False, "fehler": "beschaeftigt"}
++        return passwort.konten(a.ep_update.cli)
++
++    def passwort_neu(self, wert: str, name: str, neu: str, neu2: str, sprache: str = "de") -> dict:
++        a = self._app
++        if not self._gilt(wert):
++            return {"ok": False, "fehler": "pruefwert"}
++        if not a.e.einzelplatz or not a.e.konto_angelegt:
++            return {"ok": False, "fehler": "unbekannt"}
++        if len(neu or "") < passwort.MIN_PASSWORT:
++            return {"ok": False, "fehler": "password_too_short"}
++        if neu != neu2:
++            return {"ok": False, "fehler": "passwoerter_ungleich"}
++        if a.ep_update.laeuft() or a.sicherung.laeuft():
++            return {"ok": False, "fehler": "beschaeftigt"}
++        r = passwort.neu_setzen(a.ep_update.cli, str(name or ""), neu, sprache=str(sprache or "de"))
++        try:
++            a.dienst.protokoll.schreiben("Passwort neu gesetzt" if r.get("ok") else
++                                         f"Passwort nicht neu gesetzt ({r.get('fehler')})")
++        except Exception:  # noqa: BLE001 – Protokoll ist Beiwerk
++            pass
++        return r
++
+     # -- Sicherung und Hilfe-Datei
+     def sicherung_speichern(self, passwort: str, passwort2: str) -> dict:
+diff --git a/taleward_worker/passwort.py b/taleward_worker/passwort.py
+new file mode 100644
+index 0000000..a3536d9
+--- /dev/null
++++ b/taleward_worker/passwort.py
+@@ -0,0 +1,94 @@
++"""„Passwort vergessen“ bei „Alles auf diesem PC“: Wer hier sitzt, ist der Verwalter – einen Link per E-Mail gibt es
++nicht. Damit nicht jeder am entsperrten PC das Passwort neu setzen kann, bestätigt Windows Hello vorher (PIN,
++Fingerabdruck oder Gesicht des Windows-Kontos). Ohne eingerichtetes Windows Hello wird nichts zurückgesetzt.
++
++Das neue Passwort geht über die Standardeingabe an den Server (`passwort-neu`, ab Server 0.4.118), nie in die
++Befehlszeile oder ins Protokoll.
++"""
++from __future__ import annotations
++
++import asyncio
++import logging
++import sys
++
++log = logging.getLogger("passwort")
++
++MIN_PASSWORT = 8
++MINDEST_SERVER = (0, 4, 118)
++
++
++def windows_bestaetigen(text: str) -> str:
++    """Windows Hello fragen. Ergebnis: "ok", "abgebrochen", "abgelehnt", "nicht_eingerichtet" oder "fehler"."""
++    if sys.platform != "win32":
++        return "nicht_eingerichtet"
++    try:
++        import winrt.windows.foundation  # noqa: F401 – Projektion für IAsyncOperation (await)
++        from winrt.windows.security.credentials.ui import (
++            UserConsentVerificationResult as Ergebnis,
++            UserConsentVerifier,
++            UserConsentVerifierAvailability as Verfuegbar,
++        )
++    except Exception:  # noqa: BLE001 – ohne die Windows-Bausteine gibt es keine Bestätigung
++        log.exception("Windows Hello nicht ladbar")
++        return "fehler"
++
++    async def ablauf() -> str:
++        verfuegbar = await UserConsentVerifier.check_availability_async()
++        if verfuegbar != Verfuegbar.AVAILABLE:
++            return "nicht_eingerichtet"
++        r = await UserConsentVerifier.request_verification_async(text)
++        if r == Ergebnis.VERIFIED:
++            return "ok"
++        if r == Ergebnis.CANCELED:
++            return "abgebrochen"
++        if r in (Ergebnis.DEVICE_NOT_PRESENT, Ergebnis.NOT_CONFIGURED_FOR_USER, Ergebnis.DISABLED_BY_POLICY):
++            return "nicht_eingerichtet"
++        return "abgelehnt"
++
++    try:
++        return asyncio.run(ablauf())
++    except Exception:  # noqa: BLE001 – im Zweifel nichts zurücksetzen
++        log.exception("Windows Hello hat nicht geantwortet")
++        return "fehler"
++
++
++def fassung(text: str | None) -> tuple[int, ...]:
++    try:
++        return tuple(int(x) for x in str(text or "").split(".")[:3])
++    except ValueError:
++        return ()
++
++
++def konten(cli) -> dict:
++    """Verwalter-Konten dieses PCs. `cli` ist ServerUpdate.cli (Motor mit der Umgebung des Servers)."""
++    r = cli("verwalter")
++    if r.returncode != 0:
++        return {"ok": False, "fehler": "zu_alt" if "No such command" in (r.stderr or "") else "unbekannt"}
++    namen = [z.strip() for z in r.stdout.splitlines() if z.strip()]
++    return {"ok": True, "konten": namen}
++
++
++def hello_text(name: str, sprache: str) -> str:
++    if str(sprache or "").startswith("en"):
++        return f"Taleward: set a new password for “{name}”"
++    return f"Taleward: neues Passwort für „{name}“ setzen"
++
++
++def neu_setzen(cli, name: str, passwort: str, sprache: str = "de", bestaetigen=windows_bestaetigen) -> dict:
++    """Erst Windows Hello, dann das neue Passwort über die Standardeingabe."""
++    if bestaetigen is None:
++        return {"ok": False, "fehler": "unbekannt"}
++    k = konten(cli)
++    if not k["ok"]:
++        return k
++    if name not in k["konten"]:
++        return {"ok": False, "fehler": "konto"}
++    ergebnis = bestaetigen(hello_text(name, sprache))
++    if ergebnis != "ok":
++        return {"ok": False, "fehler": "hello_" + ergebnis}
++    r = cli("passwort-neu", "-u", name, eingabe=passwort + "\n")
++    if r.returncode == 2:
++        return {"ok": False, "fehler": "password_too_short"}
++    if r.returncode != 0:
++        return {"ok": False, "fehler": "unbekannt"}
++    return {"ok": True}
+diff --git a/taleward_worker/ui/app.css b/taleward_worker/ui/app.css
+index e35b0f5..41747c6 100644
+--- a/taleward_worker/ui/app.css
++++ b/taleward_worker/ui/app.css
+@@ -76,5 +76,5 @@ main { flex:1; overflow:auto; padding:22px 20px 28px; }
+ .feld { display:grid; gap:4px; margin-bottom:14px; font:500 14px/20px var(--font-sans); }
+ .feld input, .feld select { font:400 16px/24px var(--font-sans); color:var(--ink); background:var(--paper);
+-  border:1.5px solid var(--line-strong); border-radius:var(--radius-sm); padding:8px 12px; width:100%; }
++  border:1.5px solid var(--line-strong); border-radius:var(--radius-sm); padding:8px 12px; width:100%; min-height:48px; }
+ .feld input.code { font:700 22px/30px ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing:.12em;
+   text-transform:uppercase; text-align:center; }
+diff --git a/taleward_worker/ui/desktop-texte.js b/taleward_worker/ui/desktop-texte.js
+index d211f61..d05aff8 100644
+--- a/taleward_worker/ui/desktop-texte.js
++++ b/taleward_worker/ui/desktop-texte.js
+@@ -87,4 +87,19 @@ window.DTEXTE = {
+     d_erweitert: "Erweitert",
+     d_verwaltung_text: "Konten, Zugänge und Einstellungen des Servers auf diesem PC.",
++    d_pw_vergessen: "Passwort vergessen", d_pw_knopf: "Neues Passwort",
++    d_pw_text: "Für die Anmeldung in App und Verwaltung. Windows fragt vorher nach deiner PIN, deinem Fingerabdruck oder deinem Gesicht.",
++    d_pw_dialog_text: "Hier setzt du ein neues Passwort für dein Konto. Zur Sicherheit fragt Windows gleich nach deiner PIN, deinem Fingerabdruck oder deinem Gesicht. Danach bist du überall abgemeldet und meldest dich mit dem neuen Passwort an.",
++    d_pw_konto: "Konto", d_pw_neu: "Neues Passwort", d_pw_neu_hilfe: "Mindestens 8 Zeichen.", d_pw_setzen: "Neues Passwort setzen",
++    d_pw_fertig: "Neues Passwort gesetzt. Melde dich damit an.",
++    pw_f_password_too_short: "Das Passwort braucht mindestens 8 Zeichen.",
++    pw_f_passwoerter_ungleich: "Die beiden Passwörter stimmen nicht überein.",
++    pw_f_hello_abgebrochen: "Abgebrochen. Das Passwort ist unverändert.",
++    pw_f_hello_abgelehnt: "Windows hat die Bestätigung abgelehnt. Das Passwort ist unverändert.",
++    pw_f_hello_nicht_eingerichtet: "Auf diesem PC ist Windows Hello nicht eingerichtet. Richte in den Windows-Einstellungen unter Konten → Anmeldeoptionen eine PIN ein und versuch es dann noch einmal.",
++    pw_f_hello_fehler: "Windows hat nicht geantwortet. Das Passwort ist unverändert. Unter Hilfe steht, was zuletzt passiert ist.",
++    pw_f_zu_alt: "Dafür braucht Taleward eine neuere Fassung. Unter Einstellungen → Updates auf „Jetzt aktualisieren“ klicken.",
++    pw_f_beschaeftigt: "Gerade läuft ein Update oder eine Sicherung. Versuch es danach noch einmal.",
++    pw_f_konto: "Dieses Konto gibt es hier nicht.",
++    pw_f_unbekannt: "Das hat nicht geklappt. Unter Hilfe steht, was zuletzt passiert ist.",
+     d_betriebsart: "Betriebsart", d_betriebsart_text: "Jetzt: Alles auf diesem PC. Mit einem Server verbunden heißt das Programm Taleward Worker und wird ein kleines Fenster.",
+     d_zu_worker: "Zu Taleward Worker wechseln", d_zu_worker_titel: "Zu Taleward Worker wechseln?",
+@@ -210,4 +225,19 @@ window.DTEXTE = {
+     d_erweitert: "Advanced",
+     d_verwaltung_text: "Accounts, access and settings of the server on this PC.",
++    d_pw_vergessen: "Forgot password", d_pw_knopf: "New password",
++    d_pw_text: "For signing in to the app and administration. Windows asks for your PIN, fingerprint or face first.",
++    d_pw_dialog_text: "Set a new password for your account here. For security, Windows will ask for your PIN, fingerprint or face. Afterwards you are signed out everywhere and sign in with the new password.",
++    d_pw_konto: "Account", d_pw_neu: "New password", d_pw_neu_hilfe: "At least 8 characters.", d_pw_setzen: "Set new password",
++    d_pw_fertig: "New password set. Sign in with it.",
++    pw_f_password_too_short: "The password needs at least 8 characters.",
++    pw_f_passwoerter_ungleich: "The two passwords do not match.",
++    pw_f_hello_abgebrochen: "Cancelled. The password is unchanged.",
++    pw_f_hello_abgelehnt: "Windows declined the confirmation. The password is unchanged.",
++    pw_f_hello_nicht_eingerichtet: "Windows Hello is not set up on this PC. Set up a PIN in Windows Settings under Accounts → Sign-in options, then try again.",
++    pw_f_hello_fehler: "Windows did not respond. The password is unchanged. Help shows what happened recently.",
++    pw_f_zu_alt: "This needs a newer version of Taleward. Under Settings → Updates, click “Update now”.",
++    pw_f_beschaeftigt: "An update or backup is running. Try again afterwards.",
++    pw_f_konto: "This account does not exist here.",
++    pw_f_unbekannt: "That did not work. Help shows what happened recently.",
+     d_betriebsart: "Mode", d_betriebsart_text: "Now: Everything on this PC. Connected to a server, the program is called Taleward Worker and becomes a small window.",
+     d_zu_worker: "Switch to Taleward Worker", d_zu_worker_titel: "Switch to Taleward Worker?",
+diff --git a/taleward_worker/ui/desktop.css b/taleward_worker/ui/desktop.css
+index 2f34c00..608e88b 100644
+--- a/taleward_worker/ui/desktop.css
++++ b/taleward_worker/ui/desktop.css
+@@ -139,2 +139,3 @@ body.d.schmal .toast { left:calc(50% + 36px); }
+ .liste-schlicht { list-style:none; margin:0 0 16px; padding:0; }
+ .liste-schlicht li { padding:2px 0; }
++.rahmen__rechts { margin-left:auto; }
+diff --git a/taleward_worker/ui/desktop.html b/taleward_worker/ui/desktop.html
+index 7e5930b..b7a3dbe 100644
+--- a/taleward_worker/ui/desktop.html
++++ b/taleward_worker/ui/desktop.html
+@@ -56,4 +56,5 @@
+     <button class="tw-btn tw-btn--quiet" id="verwaltung-zurueck" type="button" data-t="d_zurueck_einstellungen"></button>
+     <strong data-t="d_verwaltung"></strong>
++    <button class="tw-btn tw-btn--quiet rahmen__rechts" id="verwaltung-passwort" type="button" data-t="d_pw_vergessen"></button>
+   </div>
+   <div class="rahmen__hinweis" id="verwaltung-hinweis" hidden>
+@@ -222,4 +223,6 @@
+     <div class="zeile"><div class="zeile__text"><strong data-t="d_verwaltung"></strong><span data-t="d_verwaltung_text"></span></div>
+       <button class="tw-btn tw-btn--secondary" id="es-verwaltung" type="button" data-t="d_oeffnen"></button></div>
++    <div class="zeile"><div class="zeile__text"><strong data-t="d_pw_vergessen"></strong><span data-t="d_pw_text"></span></div>
++      <button class="tw-btn tw-btn--secondary" id="es-passwort" type="button" data-t="d_pw_knopf"></button></div>
+     <div class="zeile"><div class="zeile__text"><strong data-t="d_betriebsart"></strong><span data-t="d_betriebsart_text"></span></div>
+       <button class="tw-btn tw-btn--secondary" id="es-betrieb" type="button" data-t="d_zu_worker"></button></div>
+@@ -284,4 +287,14 @@
+       <input id="zurueck-passwort" type="password" autocomplete="off"></label>
+   </div>
++  <div data-dialog="passwort">
++    <p class="leise" data-t="d_pw_dialog_text"></p>
++    <label class="feld"><span data-t="d_pw_konto"></span>
++      <select id="pw-konto"></select></label>
++    <label class="feld"><span data-t="d_pw_neu"></span>
++      <input id="pw-neu" type="password" autocomplete="new-password">
++      <span class="hilfe" data-t="d_pw_neu_hilfe"></span></label>
++    <label class="feld"><span data-t="Passwort wiederholen"></span>
++      <input id="pw-neu2" type="password" autocomplete="new-password"></label>
++  </div>
+   <div data-dialog="hilfe">
+     <p class="leise klein" data-t="hilfe_text"></p>
+diff --git a/taleward_worker/ui/desktop.js b/taleward_worker/ui/desktop.js
+index b821ab5..a7436c0 100644
+--- a/taleward_worker/ui/desktop.js
++++ b/taleward_worker/ui/desktop.js
+@@ -583,4 +583,9 @@
+         if (!r || !r.ok) return dialogFehler(fehlerText("sich_f_", r && r.fehler));
+         dialogZu();
++      } else if (dialogArt === "passwort") {
++        const r = await riskant("passwort_neu", $("#pw-konto").value, $("#pw-neu").value, $("#pw-neu2").value, sprache);
++        if (!r || !r.ok) return dialogFehler(fehlerText("pw_f_", r && r.fehler));
++        dialogZu(); toast(t("d_pw_fertig"));
++        if (bereich === "verwaltung") { const f = $("#rahmen-verwaltung"); if (f.src) f.src = f.src; }
+       } else if (dialogArt === "hilfe") {
+         const r = await api.hilfe_speichern();
+@@ -679,4 +684,14 @@
+       async () => { await riskant("ollama_entfernen"); speicherLaden(); });
+     $("#es-verwaltung").onclick = () => bereichZeigen("verwaltung");
++    const passwortDialog = async () => {
++      const r = await api.passwort_konten();
++      const auswahl = $("#pw-konto");
++      auswahl.replaceChildren(...((r && r.konten) || []).map((n) => { const o = document.createElement("option"); o.value = n; o.textContent = n; return o; }));
++      dialogOeffnen("passwort", t("d_pw_vergessen"), t("d_pw_setzen"));
++      if (!r || !r.ok) { dialogFehler(fehlerText("pw_f_", r && r.fehler)); $("#dialog-ok").disabled = true; }
++      else if (!r.konten.length) { dialogFehler(t("pw_f_unbekannt")); $("#dialog-ok").disabled = true; }
++    };
++    $("#es-passwort").onclick = passwortDialog;
++    $("#verwaltung-passwort").onclick = passwortDialog;
+     $("#es-betrieb").onclick = () => {
+       const netz = (S.taleward && S.taleward.netz) || {};
+@@ -708,5 +723,5 @@
+     $("#dialog-abbrechen").onclick = dialogZu;
+     $("#dialog").addEventListener("close", () => {
+-      ["#sich-passwort", "#sich-passwort2", "#zurueck-passwort"].forEach((id) => { $(id).value = ""; });
++      ["#sich-passwort", "#sich-passwort2", "#zurueck-passwort", "#pw-neu", "#pw-neu2"].forEach((id) => { $(id).value = ""; });
+       $("#hilfe-vorschau").value = ""; dialogArt = null; frageAktion = null;
+     });
+diff --git a/tests/test_worker_0320.py b/tests/test_worker_0320.py
+new file mode 100644
+index 0000000..9cda6cc
+--- /dev/null
++++ b/tests/test_worker_0320.py
+@@ -0,0 +1,64 @@
++"""Worker 0.3.20: „Passwort vergessen“ bei „Alles auf diesem PC“ – erst Windows Hello, dann das neue Passwort über die
++Standardeingabe (`passwort-neu`, Server ab 0.4.118); ohne Bestätigung wird nichts gesetzt."""
++import re
++import subprocess
++from pathlib import Path
++
++from taleward_worker import passwort
++
++UI = Path(__file__).resolve().parent.parent / "taleward_worker" / "ui"
++
++
++class Cli:
++    def __init__(self, verwalter="benjamin\n", fehlt=False, rc_neu=0):
++        self.aufrufe, self.verwalter, self.fehlt, self.rc_neu = [], verwalter, fehlt, rc_neu
++
++    def __call__(self, *args, eingabe=None):
++        self.aufrufe.append((args, eingabe))
++        if args[0] == "verwalter":
++            if self.fehlt:
++                return subprocess.CompletedProcess(args, 2, "", "Error: No such command 'verwalter'.")
++            return subprocess.CompletedProcess(args, 0, self.verwalter, "")
++        return subprocess.CompletedProcess(args, self.rc_neu, "Passwort geändert.\n", "")
++
++
++def test_erst_hello_dann_passwort():
++    cli, gefragt = Cli(), []
++    r = passwort.neu_setzen(cli, "benjamin", "ganz-neu-123", "de", bestaetigen=lambda t: gefragt.append(t) or "ok")
++    assert r == {"ok": True} and "benjamin" in gefragt[0]
++    args, eingabe = cli.aufrufe[-1]
++    assert args == ("passwort-neu", "-u", "benjamin") and eingabe == "ganz-neu-123\n"  # nie in der Befehlszeile
++    assert all("ganz-neu-123" not in " ".join(a) for a, _ in cli.aufrufe)
++
++
++def test_ohne_hello_nichts():
++    for ergebnis in ("abgebrochen", "abgelehnt", "nicht_eingerichtet", "fehler"):
++        cli = Cli()
++        r = passwort.neu_setzen(cli, "benjamin", "ganz-neu-123", bestaetigen=lambda t, e=ergebnis: e)
++        assert r == {"ok": False, "fehler": "hello_" + ergebnis}
++        assert [a[0][0] for a in cli.aufrufe] == ["verwalter"]
++
++
++def test_nur_verwalter_und_alter_server():
++    cli = Cli()
++    assert passwort.neu_setzen(cli, "spielerin", "ganz-neu-123", bestaetigen=lambda t: "ok")["fehler"] == "konto"
++    assert passwort.konten(Cli(fehlt=True)) == {"ok": False, "fehler": "zu_alt"}
++    assert passwort.konten(Cli(verwalter="a\nb\n")) == {"ok": True, "konten": ["a", "b"]}
++
++
++def test_ausserhalb_windows_nicht_eingerichtet():
++    import sys
++
++    if sys.platform != "win32":
++        assert passwort.windows_bestaetigen("x") == "nicht_eingerichtet"
++
++
++def test_oberflaeche_vollstaendig():
++    html = (UI / "desktop.html").read_text(encoding="utf-8")
++    assert 'id="es-passwort"' in html and 'id="verwaltung-passwort"' in html and 'data-dialog="passwort"' in html
++    texte = (UI / "desktop-texte.js").read_text(encoding="utf-8")
++    de, en = texte.split("\n  en: {")
++    for schluessel in set(re.findall(r"\b((?:d_pw|pw_f)_\w+):", texte)):
++        assert schluessel + ":" in de and schluessel + ":" in en, schluessel
++    js = (UI / "desktop.js").read_text(encoding="utf-8")
++    assert 'riskant("passwort_neu"' in js  # nur mit Prüfwert
+diff --git a/uv.lock b/uv.lock
+index a20deec..d541b0f 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -677,5 +677,5 @@ wheels = [
+ [[package]]
+ name = "taleward-worker"
+-version = "0.3.19"
++version = "0.3.20"
+ source = { editable = "." }
+ dependencies = [
+@@ -687,4 +687,7 @@ dependencies = [
+     { name = "pywebview" },
+     { name = "truststore" },
++    { name = "winrt-runtime", marker = "sys_platform == 'win32'" },
++    { name = "winrt-windows-foundation", marker = "sys_platform == 'win32'" },
++    { name = "winrt-windows-security-credentials-ui", marker = "sys_platform == 'win32'" },
+     { name = "zstandard", marker = "sys_platform != 'win32'" },
+ ]
+@@ -711,4 +714,7 @@ requires-dist = [
+     { name = "pywebview", extras = ["qt"], marker = "extra == 'qt'", specifier = ">=5.3" },
+     { name = "truststore", specifier = ">=0.10" },
++    { name = "winrt-runtime", marker = "sys_platform == 'win32'", specifier = "==3.2.1" },
++    { name = "winrt-windows-foundation", marker = "sys_platform == 'win32'", specifier = "==3.2.1" },
++    { name = "winrt-windows-security-credentials-ui", marker = "sys_platform == 'win32'", specifier = "==3.2.1" },
+     { name = "zstandard", marker = "sys_platform != 'win32'", specifier = ">=0.22" },
+ ]
+@@ -739,4 +745,64 @@ wheels = [
+ ]
+ 
++[[package]]
++name = "winrt-runtime"
++version = "3.2.1"
++source = { registry = "https://pypi.org/simple" }
++dependencies = [
++    { name = "typing-extensions" },
++]
++sdist = { url = "https://files.pythonhosted.org/packages/16/dd/acdd527c1d890c8f852cc2af644aa6c160974e66631289420aa871b05e65/winrt_runtime-3.2.1.tar.gz", hash = "sha256:c8dca19e12b234ae6c3dadf1a4d0761b51e708457492c13beb666556958801ea", size = 21721, upload-time = "2025-06-06T14:40:27.593Z" }
++wheels = [
++    { url = "https://files.pythonhosted.org/packages/90/8d/d7ae0e07cd85c7768de76e8578261854f2af72bd3a8a527bb675e8ae0eda/winrt_runtime-3.2.1-cp311-cp311-win32.whl", hash = "sha256:9e9b64f1ba631cc4b9fe60b8ff16fef3f32c7ce2fcc84735a63129ff8b15c022", size = 210798, upload-time = "2025-06-06T06:44:04.775Z" },
++    { url = "https://files.pythonhosted.org/packages/ac/66/d05f6e6c0517654734e7f87fa1f0fbc965add9f27cc36b524d96331ab3d8/winrt_runtime-3.2.1-cp311-cp311-win_amd64.whl", hash = "sha256:c0a9046ae416808420a358c51705af8ae100acd40bc578be57ddfdd51cbb0f9c", size = 242032, upload-time = "2025-06-06T06:44:06.103Z" },
++    { url = "https://files.pythonhosted.org/packages/39/a5/760c8396110f6d3e4c417752da1a2bf3b89e0998329c2f10afc717ef6291/winrt_runtime-3.2.1-cp311-cp311-win_arm64.whl", hash = "sha256:e94f3cb40ea2d723c44c82c16d715c03c6b3bd977d135b49535fdd5415fd9130", size = 415659, upload-time = "2025-06-06T06:44:07.007Z" },
++    { url = "https://files.pythonhosted.org/packages/d3/54/3dd06f2341fab6abb06588a16b30e0b213b0125be7b79dafc3bdba3b334a/winrt_runtime-3.2.1-cp312-cp312-win32.whl", hash = "sha256:762b3d972a2f7037f7db3acbaf379dd6d8f6cda505f71f66c6b425d1a1eae2f1", size = 210090, upload-time = "2025-06-06T06:44:08.151Z" },
++    { url = "https://files.pythonhosted.org/packages/ca/a1/1d7248d5c62ccbea5f3e0da64ca4529ce99c639c3be2485b6ed709f5c740/winrt_runtime-3.2.1-cp312-cp312-win_amd64.whl", hash = "sha256:06510db215d4f0dc45c00fbb1251c6544e91742a0ad928011db33b30677e1576", size = 241391, upload-time = "2025-06-06T06:44:09.442Z" },
++    { url = "https://files.pythonhosted.org/packages/8a/ae/6a205d8dafc79f7c242be7f940b1e0c1971fd64ab3079bda4b514aa3d714/winrt_runtime-3.2.1-cp312-cp312-win_arm64.whl", hash = "sha256:14562c29a087ccad38e379e585fef333e5c94166c807bdde67b508a6261aa195", size = 415242, upload-time = "2025-06-06T06:44:10.407Z" },
++    { url = "https://files.pythonhosted.org/packages/79/d4/1a555d8bdcb8b920f8e896232c82901cc0cda6d3e4f92842199ae7dff70a/winrt_runtime-3.2.1-cp313-cp313-win32.whl", hash = "sha256:44e2733bc709b76c554aee6c7fe079443b8306b2e661e82eecfebe8b9d71e4d1", size = 210022, upload-time = "2025-06-06T06:44:11.767Z" },
++    { url = "https://files.pythonhosted.org/packages/aa/24/2b6e536ca7745d788dfd17a2ec376fa03a8c7116dc638bb39b035635484f/winrt_runtime-3.2.1-cp313-cp313-win_amd64.whl", hash = "sha256:3c1fdcaeedeb2920dc3b9039db64089a6093cad2be56a3e64acc938849245a6d", size = 241349, upload-time = "2025-06-06T06:44:12.661Z" },
++    { url = "https://files.pythonhosted.org/packages/d4/7f/6d72973279e2929b2a71ed94198ad4a5d63ee2936e91a11860bf7b431410/winrt_runtime-3.2.1-cp313-cp313-win_arm64.whl", hash = "sha256:28f3dab083412625ff4d2b46e81246932e6bebddf67bea7f05e01712f54e6159", size = 415126, upload-time = "2025-06-06T06:44:13.702Z" },
++]
++
++[[package]]
++name = "winrt-windows-foundation"
++version = "3.2.1"
++source = { registry = "https://pypi.org/simple" }
++dependencies = [
++    { name = "winrt-runtime" },
++]
++sdist = { url = "https://files.pythonhosted.org/packages/0c/55/098ce7ea0679efcc1298b269c48768f010b6c68f90c588f654ec874c8a74/winrt_windows_foundation-3.2.1.tar.gz", hash = "sha256:ad2f1fcaa6c34672df45527d7c533731fdf65b67c4638c2b4aca949f6eec0656", size = 30485, upload-time = "2025-06-06T14:41:53.344Z" }
++wheels = [
++    { url = "https://files.pythonhosted.org/packages/c0/36/09b9757f7cbf269e67008ea2ad188a44f974c94c9b49ebf0b52d1a8c4069/winrt_windows_foundation-3.2.1-cp311-cp311-win32.whl", hash = "sha256:d1b5970241ccd61428f7330d099be75f4f52f25e510d82c84dbbdaadd625e437", size = 111944, upload-time = "2025-06-06T07:10:58.496Z" },
++    { url = "https://files.pythonhosted.org/packages/05/a5/216d66df6bdcee58eb3877fabc1544337e23f850bf9f93838db7f5698371/winrt_windows_foundation-3.2.1-cp311-cp311-win_amd64.whl", hash = "sha256:f3762be2f6e0f2aedf83a0742fd727290b397ffe3463d963d29211e4ebb53a7e", size = 118465, upload-time = "2025-06-06T07:10:59.678Z" },
++    { url = "https://files.pythonhosted.org/packages/be/ca/48ca8b5bc5be5c7a5516c9e1d9a21861b4217e1b4ee57923aab6f13fa411/winrt_windows_foundation-3.2.1-cp311-cp311-win_arm64.whl", hash = "sha256:806c77818217b3476e6c617293b3d5b0ff8a9901549dc3417586f6799938d671", size = 109609, upload-time = "2025-06-06T07:11:00.54Z" },
++    { url = "https://files.pythonhosted.org/packages/f3/f8/495e304ddedd5ff2f196efbde906265cb75ade4d79e2937837f72ef654a0/winrt_windows_foundation-3.2.1-cp312-cp312-win32.whl", hash = "sha256:867642ccf629611733db482c4288e17b7919f743a5873450efb6d69ae09fdc2b", size = 112169, upload-time = "2025-06-06T07:11:01.438Z" },
++    { url = "https://files.pythonhosted.org/packages/9b/5e/b5059e4ece095351c496c9499783130c302d25e353c18031d5231b1b3b3c/winrt_windows_foundation-3.2.1-cp312-cp312-win_amd64.whl", hash = "sha256:45550c5b6c2125cde495c409633e6b1ea5aa1677724e3b95eb8140bfccbe30c9", size = 118668, upload-time = "2025-06-06T07:11:02.475Z" },
++    { url = "https://files.pythonhosted.org/packages/a5/70/acbcb3ef07b1b67e2de4afab9176a5282cfd775afd073efe6828dfc65ace/winrt_windows_foundation-3.2.1-cp312-cp312-win_arm64.whl", hash = "sha256:94f4661d71cb35ebc52be7af112f2eeabdfa02cb05e0243bf9d6bd2cafaa6f37", size = 109671, upload-time = "2025-06-06T07:11:03.538Z" },
++    { url = "https://files.pythonhosted.org/packages/7b/71/5e87131e4aecc8546c76b9e190bfe4e1292d028bda3f9dd03b005d19c76c/winrt_windows_foundation-3.2.1-cp313-cp313-win32.whl", hash = "sha256:3998dc58ed50ecbdbabace1cdef3a12920b725e32a5806d648ad3f4829d5ba46", size = 112184, upload-time = "2025-06-06T07:11:04.459Z" },
++    { url = "https://files.pythonhosted.org/packages/ba/7f/8d5108461351d4f6017f550af8874e90c14007f9122fa2eab9f9e0e9b4e1/winrt_windows_foundation-3.2.1-cp313-cp313-win_amd64.whl", hash = "sha256:6e98617c1e46665c7a56ce3f5d28e252798416d1ebfee3201267a644a4e3c479", size = 118672, upload-time = "2025-06-06T07:11:05.55Z" },
++    { url = "https://files.pythonhosted.org/packages/44/f5/2edf70922a3d03500dab17121b90d368979bd30016f6dbca0d043f0c71f1/winrt_windows_foundation-3.2.1-cp313-cp313-win_arm64.whl", hash = "sha256:2a8c1204db5c352f6a563130a5a41d25b887aff7897bb677d4ff0b660315aad4", size = 109673, upload-time = "2025-06-06T07:11:06.398Z" },
++]
++
++[[package]]
++name = "winrt-windows-security-credentials-ui"
++version = "3.2.1"
++source = { registry = "https://pypi.org/simple" }
++dependencies = [
++    { name = "winrt-runtime" },
++]
++sdist = { url = "https://files.pythonhosted.org/packages/bd/e4/231502379b5b1428a4eed4a306034fc84e2809a0e9cd2f0ebfc864af1f77/winrt_windows_security_credentials_ui-3.2.1.tar.gz", hash = "sha256:51e3c8182cd558123c4b4eb321692e78be38dc84e43d2d1aebe95415b3c74071", size = 8630, upload-time = "2025-06-06T14:43:06.776Z" }
++wheels = [
++    { url = "https://files.pythonhosted.org/packages/62/da/cf5986b676a1b56a746f28ca642c0824ca1a62178eb33052feea96bf98b4/winrt_windows_security_credentials_ui-3.2.1-cp311-cp311-win32.whl", hash = "sha256:ab1fc909d9bd8fb1877587598a4df95b73aebbad9f3e43f6b83ed7f9e50ae03b", size = 40567, upload-time = "2025-06-06T13:56:11.457Z" },
++    { url = "https://files.pythonhosted.org/packages/24/7c/2879d246b85e84f01d8fe482f4a28abae6983ae93d1d6017c9b1f76c8402/winrt_windows_security_credentials_ui-3.2.1-cp311-cp311-win_amd64.whl", hash = "sha256:71bbafdcc0390953bfbf96a1afd5b2468208fe76cfc13feba4f9b80afabd1726", size = 44255, upload-time = "2025-06-06T13:56:12.414Z" },
++    { url = "https://files.pythonhosted.org/packages/8c/f8/b5136b353da0f3f309a365cbe879f37409ea0d041dc4e5f68db414ed20b0/winrt_windows_security_credentials_ui-3.2.1-cp311-cp311-win_arm64.whl", hash = "sha256:5adb5f26009d0ebe416f623b74fa6a80ff4798c9daf7f6c08b2edc3da7c701a8", size = 39583, upload-time = "2025-06-06T13:56:13.523Z" },
++    { url = "https://files.pythonhosted.org/packages/2b/95/d3fb570ec66f4f7277593ebcd9f26aae724e34a9263309e0bc53b14a517f/winrt_windows_security_credentials_ui-3.2.1-cp312-cp312-win32.whl", hash = "sha256:6d722644b3cf1616b884f1f9624c999643528bd1adfd7f62a83773dac643aea0", size = 40649, upload-time = "2025-06-06T13:56:14.255Z" },
++    { url = "https://files.pythonhosted.org/packages/5f/b2/4a624aca886207c10bc9f524ee45f53063c0115d6c483ebaee9b72f7e6f9/winrt_windows_security_credentials_ui-3.2.1-cp312-cp312-win_amd64.whl", hash = "sha256:0af712c9a014e4b683cd6aa8e006edb758e08f8e03c6092c697b8e2cd3e8040d", size = 44137, upload-time = "2025-06-06T13:56:14.996Z" },
++    { url = "https://files.pythonhosted.org/packages/a3/56/d4070306b11be25266b21a1aaea44be664998637cb29504ec7c160d03bd1/winrt_windows_security_credentials_ui-3.2.1-cp312-cp312-win_arm64.whl", hash = "sha256:ce563731240d36c02379c7f50d072603c471c10fad909c3cd72aa72f08d228a7", size = 39570, upload-time = "2025-06-06T13:56:15.74Z" },
++    { url = "https://files.pythonhosted.org/packages/be/63/08c59b89bd273210c68da38bc5ea8550b4b19301e2cc1fff84a0736e0c7b/winrt_windows_security_credentials_ui-3.2.1-cp313-cp313-win32.whl", hash = "sha256:b2b7e9c0df9e42ea6695cc89e53543ffb8999fee9e80ec40ecc9c599ca80107e", size = 40655, upload-time = "2025-06-06T13:56:16.572Z" },
++    { url = "https://files.pythonhosted.org/packages/fd/35/fd661aa8a65ec7d7a6bda8ca06508ffc6b7263d1b947de37856c81a46a2f/winrt_windows_security_credentials_ui-3.2.1-cp313-cp313-win_amd64.whl", hash = "sha256:ae1b757d8bb13a30c4ac6732c4cba3128a55f5126a4496f96d8f513837d30406", size = 44142, upload-time = "2025-06-06T13:56:17.305Z" },
++    { url = "https://files.pythonhosted.org/packages/db/55/3f42d0519b61b60f7a8a77fa807acbf46bb62675078033e383fc59947313/winrt_windows_security_credentials_ui-3.2.1-cp313-cp313-win_arm64.whl", hash = "sha256:aa13db73b4ed9004527636271cabfe216d461c8274e97de8ee0021432d636a70", size = 39564, upload-time = "2025-06-06T13:56:18.285Z" },
++]
++
+ [[package]]
+ name = "zstandard"
+-- 
+2.43.0
+
