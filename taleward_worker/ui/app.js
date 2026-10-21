@@ -113,6 +113,14 @@
     if (nr === 4) { $("#hinweis-modelle").hidden = !!(S.motor && S.motor.testmodus); reglerZeigen(); }
   }
 
+  // Ab Server 0.4.117 lädt der Server das Sprechermodell selbst vom Taleward-Spiegel – die ersten 15 Minuten ist das
+  // kein Fall zum Einrichten
+  function modellLaedtNoch(z) {
+    const v = String(S.serverVersion || "").split(".").map(Number);
+    const neu = v.length === 3 && (v[0] > 0 || v[1] > 4 || (v[1] === 4 && v[2] >= 117));
+    return !!(neu && z.modellSeit && Date.now() / 1000 - z.modellSeit < 900);
+  }
+
   function dauerText(d) {
     if (!d) return "";
     return d[1] >= 120 ? t("dauer_std", { a: zahl(d[0] / 60, d[0] % 60 ? 1 : 0), b: zahl(d[1] / 60, d[1] % 60 ? 1 : 0) })
@@ -288,6 +296,9 @@
       fortschritt = z.p || 0;
     } else if (art === "startet" && z.modelle) {
       text = t("st_modelle_text", { mb: gb(z.modelleMb || 0) });
+    } else if (art === "fehler" && z.code === "modell" && modellLaedtNoch(z)) {
+      titel = t("st_modell_laedt");
+      text = t("st_modell_laedt_text", { wann: wann(z.neuerVersuch) });
     } else if (art === "fehler" && z.code === "modell") {
       titel = t(einzelplatz() ? "st_modell_hier" : "st_modell");
       text = t(einzelplatz() ? "st_modell_hier_text" : "st_modell_text", { wann: wann(z.neuerVersuch) });
@@ -366,7 +377,9 @@
     if (["warte", "arbeitet", "getrennt", "startet", "server_pausiert"].includes(art)) liste.push(["Pausieren", "secondary", () => api.pausieren(true)]);
     if (art === "pausiert") liste.push(["Fortsetzen", "primary", () => api.pausieren(false)]);
     if (art === "gestoppt") liste.push(["Starten", "primary", () => api.starten()]);
-    if (art === "fehler" && S.dienst.zustand.code === "modell" && einzelplatz()) {
+    if (art === "fehler" && S.dienst.zustand.code === "modell" && modellLaedtNoch(S.dienst.zustand)) {
+      liste.push(["Protokoll ansehen", "quiet", () => zeigeReiter("protokoll")]);
+    } else if (art === "fehler" && S.dienst.zustand.code === "modell" && einzelplatz()) {
       // Stimmen erkennen einrichten: genau die Stelle in der Verwaltung, mit Anleitung (Quelle der Wahrheit für den Weg)
       liste.push(["Stimmen erkennen einrichten", "primary", () => api.taleward_oeffnen()]);
       liste.push(["Protokoll ansehen", "quiet", () => zeigeReiter("protokoll")]);

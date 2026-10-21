@@ -423,6 +423,13 @@ class Dienst:
 
     # ------------------------------------------------------------------ Ereignisse des Motors
     def _setzen(self, art: str, **daten) -> None:
+        # Fehlt das Sprechermodell, lädt der Server es meist gerade (ab 0.4.117 vom Taleward-Spiegel): seit wann es
+        # fehlt, bleibt über die Versuche erhalten – die Oberfläche zeigt erst nach einer Weile „braucht deine Hilfe“
+        if art == "fehler" and daten.get("code") == "modell":
+            self._modell_seit = getattr(self, "_modell_seit", None) or time.time()
+            daten["modellSeit"] = self._modell_seit
+        elif art in ("warte", "arbeitet"):
+            self._modell_seit = None
         self.zustand = {"art": art, "seit": time.time(), **daten}
 
     def _ereignis(self, e: dict) -> None:

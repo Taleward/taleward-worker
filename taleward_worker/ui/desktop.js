@@ -51,6 +51,11 @@
     const el = $("#toast"); el.textContent = text; el.hidden = false;
     clearTimeout(toast.z); toast.z = setTimeout(() => { el.hidden = true; }, 3600);
   }
+  // Ab Server 0.4.117 lädt der Server das Sprechermodell selbst vom Taleward-Spiegel – die ersten 15 Minuten ist das
+  // kein Fall für „braucht deine Hilfe“
+  function modellLaedtNoch(d, version) {
+    return !!(version && fassungMindestens(version, [0, 4, 117]) && d.modellSeit && Date.now() / 1000 - d.modellSeit < 900);
+  }
   function fassungMindestens(v, mindest) {
     const teile = String(v || "").split(".").map((x) => parseInt(x, 10) || 0);
     for (let i = 0; i < mindest.length; i++) {
@@ -216,6 +221,7 @@
     if (z.art === "fehler") return { art: "achtung", titel: t("d_z_hilfe"), text: t("tw_f_" + (z.code || "startet_nicht")), knopf: "neustart" };
     if (!S.motor && !S.entwicklung) return { art: "achtung", titel: t("d_z_hilfe"), text: t("d_z_programmteile"), knopf: "installieren" };
     if (["startet", "abgestuerzt", "gestoppt"].includes(z.art) || !z.art) return { art: "arbeit", titel: t("d_z_startet"), text: t("d_z_startet_text") };
+    if (d.art === "fehler" && d.code === "modell" && modellLaedtNoch(d, S.serverVersion)) return { art: "arbeit", titel: t("d_z_stimmen_laedt"), text: t("d_z_stimmen_laedt_text") };
     if (d.art === "fehler" && d.code === "modell") return { art: "achtung", titel: t("d_z_hilfe"), text: t("d_z_stimmen"), knopf: "stimmen" };
     if (d.art === "fehler") return { art: "achtung", titel: t("d_z_hilfe"), text: d.text || t("f_" + (d.code || "einrichtung")), knopf: "neustart" };
     if (d.art === "arbeitet") {
