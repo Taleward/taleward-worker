@@ -2,6 +2,8 @@ name: Bauen
 # Prüft die App bei jeder Änderung. Neue Fassung in pyproject.toml → Tag worker-v<Fassung> und Vorabfassung mit
 # Installer. Veröffentlicht wird sie erst durch den Ablauf „Freigabe“ (nach Bestätigung durch Benjamin).
 # Wird ein Release „worker-v…“ von Hand veröffentlicht, baut dieser Ablauf den Installer und hängt ihn an.
+# Text der Vorabfassung: NEU.md, wenn die erste Zeile „Fassung <Fassung>“ lautet (die Zeile selbst wird nicht
+# übernommen). Sonst der Standardtext.
 on:
   push:
     branches: [main]
@@ -154,7 +156,17 @@ jobs:
         if: env.NEU == '1'
         run: |
           set -euo pipefail
+          NOTIZEN="$RUNNER_TEMP/notizen.md"
+          : > "$NOTIZEN"
+          if [ -f NEU.md ] && [ "$(head -n1 NEU.md | tr -d '\r')" = "Fassung $VERSION" ]; then
+            tail -n +2 NEU.md | tr -d '\r' | sed '/./,$!d' > "$NOTIZEN"
+          else
+            echo "Keine NEU.md für $VERSION – Standardtext."
+          fi
+          if [ ! -s "$NOTIZEN" ]; then
+            printf '%s\n' "Automatisch gebaut. Wird mit der Freigabe (Ablauf Freigabe) veröffentlicht." > "$NOTIZEN"
+          fi
           gh release create "worker-v$VERSION" --target "$(git rev-parse HEAD)" --prerelease \
             --title "Taleward Worker $VERSION" \
-            --notes "Automatisch gebaut. Wird mit der Freigabe (Ablauf Freigabe) veröffentlicht." \
+            --notes-file "$NOTIZEN" \
             dist/TalewardWorker-Setup.exe "dist/TalewardWorker-Setup-$VERSION.exe" install-linux.sh
