@@ -1,0 +1,67 @@
+From fa996c314146ad06a26a2414c346c5e2385544f0 Mon Sep 17 00:00:00 2001
+From: "Tinkerworks (Benjamin)"
+ <121437138+Tinkerworkss@users.noreply.github.com>
+Date: Thu, 22 Oct 2026 17:03:01 +0200
+Subject: [PATCH] Worker 0.3.25
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fassungssprung mit Text für die Freigabe (NEU.md).
+---
+ NEU.md                      | 7 +++++++
+ pyproject.toml              | 2 +-
+ taleward_worker/__init__.py | 2 +-
+ uv.lock                     | 2 +-
+ 4 files changed, 10 insertions(+), 3 deletions(-)
+ create mode 100644 NEU.md
+
+diff --git a/NEU.md b/NEU.md
+new file mode 100644
+index 0000000..0c3ce50
+--- /dev/null
++++ b/NEU.md
+@@ -0,0 +1,7 @@
++Fassung 0.3.25
++
++## Was ist neu
++
++- Ist das Mikrofon in Windows gesperrt, führt ein Knopf direkt zur passenden Einstellung.
++- Solange der Server die Stimmerkennung noch einrichtet, sagt das Programm das, statt still zu warten.
++- Kleinere Verbesserungen.
+diff --git a/pyproject.toml b/pyproject.toml
+index b2c5f3b..ad21ee9 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "taleward-worker"
+-version = "0.3.24"
++version = "0.3.25"
+ description = "Taleward Worker – verarbeitet Aufnahmen für einen Taleward-Server auf dem eigenen PC mit Grafikkarte"
+ license = "AGPL-3.0-only"
+diff --git a/taleward_worker/__init__.py b/taleward_worker/__init__.py
+index 3e1234e..dce2e6f 100644
+--- a/taleward_worker/__init__.py
++++ b/taleward_worker/__init__.py
+@@ -4,5 +4,5 @@ Die App selbst ist klein. Das KI-Paket (Taleward-Server mit WhisperX, einige GB)
+ passender Fassung zum verbundenen Server und startet es als Unterprozess („chronik worker --app“).
+ """
+-VERSION = "0.3.24"
++VERSION = "0.3.25"
+ REPO = "Taleward/taleward-server"        # Server-Code = KI-Paket (engine-requirements.txt, Tags v…)
+ APP_REPO = "Taleward/taleward-worker"   # diese App
+diff --git a/uv.lock b/uv.lock
+index 0dd0691..c8b424e 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -682,5 +682,5 @@ wheels = [
+ [[package]]
+ name = "taleward-worker"
+-version = "0.3.24"
++version = "0.3.25"
+ source = { editable = "." }
+ dependencies = [
+-- 
+2.43.0
+
