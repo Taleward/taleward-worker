@@ -31,6 +31,8 @@ jobs:
           ref: ${{ github.event_name == 'workflow_run' && 'main' || '' }}
           persist-credentials: false
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false  # S21.7: kein Zwischenspeicher über Läufe hinweg
       - name: Tests der App
         run: uv sync --frozen && uv run pytest -q
       - name: KI-Paket für Windows (CUDA) und Linux auflösbar?
@@ -52,6 +54,8 @@ jobs:
           ref: ${{ github.event_name == 'workflow_run' && 'main' || '' }}
           persist-credentials: false
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false  # S21.7: kein Zwischenspeicher über Läufe hinweg
       - name: Fassung
         env:
           EREIGNIS: ${{ github.event_name }}
