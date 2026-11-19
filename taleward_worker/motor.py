@@ -44,6 +44,17 @@ TORCH_BACKEND = "cu128"
 ERWARTET_MB = {"windows": 7900, "linux": 8500, "cpu": 1800, "test": 60}
 
 
+# Älteste Serverfassung, deren KI-Paket dieser Worker installiert und benutzt. Ältere Pakete laden Modelle, ohne
+# sie gegen die feste Liste zu prüfen – die nimmt der Worker nie wieder, auch wenn ein Server sie verlangt.
+MINDEST_MOTOR = "0.4.170"
+
+
+def zu_alt(fassung: str | None) -> bool:
+    from taleward_worker.selbstupdate import neuer
+
+    return bool(fassung) and neuer(MINDEST_MOTOR, fassung)
+
+
 class MotorFehler(Exception):
     def __init__(self, code: str, text: str = ""):
         super().__init__(text or code)
@@ -73,7 +84,7 @@ def _netzcode(e: httpx.HTTPError) -> str:
     return "zertifikat" if zertifikatsfehler(e) else "github_nicht_erreichbar"
 
 
-def quelle(fassung: str) -> dict:
+def quelle(fassung: str, rueckweg: bool = False) -> dict:
     """Download-Adressen für eine Serverfassung – nur, wenn sie freigegeben (unterschrieben) ist.
 
     Die Fassung nennt der Server; geladen wird genau der Commit aus der Freigabe des Tags v<Fassung>
@@ -85,6 +96,8 @@ def quelle(fassung: str) -> dict:
                 "projekt": str(Path(eigen) / "pyproject.toml"), "lock": str(Path(eigen) / "uv.lock")}
     if not re.fullmatch(r"\d{1,4}\.\d{1,4}\.\d{1,4}", fassung or ""):
         raise MotorFehler("nicht_freigegeben", f"Unbekannte Serverfassung: {fassung!r}"[:200])
+    if zu_alt(fassung) and not rueckweg:  # auch eine freigegebene alte Fassung wird nicht mehr installiert –
+        raise MotorFehler("server_zu_alt")  # außer als Rückweg nach einem gescheiterten Update (Stand von vorher)
     tag = f"v{fassung}"
     try:
         f = freigabe.von_github(REPO, tag, user_agent=f"TalewardWorker/{VERSION}")
@@ -497,7 +510,7 @@ class Installation:
                 alt_fassung = ""
         if not alt_fassung:
             raise MotorFehler("installation", "Fassung von vorher unbekannt.")
-        q = quelle(alt_fassung)
+        q = quelle(alt_fassung, rueckweg=True)
         py = str(pfade.motor_python())
         self._abbrechen.clear()
         geprueft, _ = self._listen(q, alt_fassung, mit_pytorch=False)

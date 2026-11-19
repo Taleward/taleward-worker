@@ -11,7 +11,7 @@ def test_rueckweg_baut_die_alte_fassung_nur_mit_pruefsummen(eigener_ordner, monk
     from taleward_worker import motor, pfade
 
     geholt = []
-    monkeypatch.setattr(motor, "quelle", lambda f: geholt.append(f) or {"ref": f"v{f}", "genau": True,
+    monkeypatch.setattr(motor, "quelle", lambda f, rueckweg=False: geholt.append(f) or {"ref": f"v{f}", "genau": True,
                                                                          "paket": f"alt-{f}.zip"})
     monkeypatch.setattr(motor, "installierte_pakete", lambda py, umgebung: {"packaging"})
     monkeypatch.setattr(motor, "pytorch_pruefsummen", lambda q: pytest.fail("PyTorch bleibt beim kleinen Rückweg"))

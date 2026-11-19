@@ -700,6 +700,8 @@ class WorkerApp:
             return False
         if bool(inst.get("testmodus")) != self.e.testmodus:
             return False
+        if motor.zu_alt(inst.get("fassung")):
+            return False  # vorhandenes KI-Paket unter der Mindestfassung: nicht mehr benutzen
         if not self.e.testmodus and self.e.geraet != "cpu" and inst.get("backend") == "cpu":
             return False  # Grafikkarte gewünscht, installiert ist nur die Prozessor-Fassung
         if not self.e.testmodus and self.e.geraet != "cpu" and inst.get("torch", {}).get("cuda", "?") is None:

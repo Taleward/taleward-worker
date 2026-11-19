@@ -21,7 +21,7 @@ import httpx
 
 from taleward_worker import VERSION, geschuetzt, motor, pfade, prozesse
 
-MINDEST_SERVER = "0.4.104"  # ab dieser Server-Fassung: Datenbank-Migrationen im KI-Paket, Schlüssel geschützt
+MINDEST_SERVER = "0.4.170"  # wie motor.MINDEST_MOTOR: ältere KI-Pakete werden nicht mehr installiert oder benutzt
 PORT = 8000
 ADRESSE = f"http://127.0.0.1:{PORT}"
 APP_ADRESSE = f"http://localhost:{PORT}/app/"

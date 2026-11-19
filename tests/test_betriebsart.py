@@ -39,7 +39,7 @@ def test_wechsel_von_server_zu_alles_auf_diesem_pc(monkeypatch):
     assert _warten(lambda: installiert == [False])
     assert gestoppt and not app.e.token and not gestartet
     # KI-Paket neu genug → Taleward startet gleich
-    monkeypatch.setattr(motor, "installiert", lambda: {"fassung": "0.4.104"})
+    monkeypatch.setattr(motor, "installiert", lambda: {"fassung": "0.4.170"})
     app.e.betrieb = "verbunden"
     app.betrieb_wechseln("einzelplatz")
     assert gestartet == [1]
@@ -108,7 +108,7 @@ def test_verbindung_zum_server_bleibt_ueber_den_wechsel_erhalten(monkeypatch):
     app.server_name = "Spielgruppe Nordlicht"
     monkeypatch.setattr(app.dienst, "stoppen", lambda *a, **k: None)
     monkeypatch.setattr(app, "taleward_starten", lambda: None)
-    monkeypatch.setattr(motor, "installiert", lambda: {"fassung": "0.4.104"})
+    monkeypatch.setattr(motor, "installiert", lambda: {"fassung": "0.4.170"})
 
     app.betrieb_wechseln("einzelplatz")
     assert app.e.einzelplatz and app.e.token == ""

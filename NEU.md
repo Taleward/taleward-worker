@@ -1,7 +1,6 @@
-Fassung 0.3.25
+Fassung 0.3.26
 
 ## Was ist neu
 
-- Ist das Mikrofon in Windows gesperrt, führt ein Knopf direkt zur passenden Einstellung.
-- Solange der Server die Stimmerkennung noch einrichtet, sagt das Programm das, statt still zu warten.
+- Das Programm arbeitet nur noch mit Servern ab Fassung 0.4.170. Ist dein Server älter, sagt es das und wartet auf dessen Update.
 - Kleinere Verbesserungen.

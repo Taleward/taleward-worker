@@ -50,11 +50,11 @@ def test_motor_nur_freigegebene_fassung(monkeypatch):
         return fg.lesen(text, sig, repo, tag)
 
     monkeypatch.setattr(fg, "von_github", von_github)
-    q = motor.quelle("0.4.38")
-    assert gefragt == [("Taleward/taleward-server", "v0.4.38")]
+    q = motor.quelle("0.4.238")
+    assert gefragt == [("Taleward/taleward-server", "v0.4.238")]
     assert q["paket"] == "https://github.com/Taleward/taleward-server/archive/" + "c" * 40 + ".zip"
     assert q["anforderungen"].endswith("/" + "c" * 40 + "/engine-requirements.txt")
-    for boese in ["main", "../../x/y/main", "0.4", "0.4.38/../x", ""]:
+    for boese in ["main", "../../x/y/main", "0.4", "0.4.238/../x", ""]:
         with pytest.raises(motor.MotorFehler) as e:
             motor.quelle(boese)
         assert e.value.code == "nicht_freigegeben"
@@ -65,7 +65,7 @@ def test_motor_nur_freigegebene_fassung(monkeypatch):
 
     monkeypatch.setattr(fg, "von_github", ohne)
     with pytest.raises(motor.MotorFehler) as e:
-        motor.quelle("0.4.39")
+        motor.quelle("0.4.239")
     assert e.value.code == "nicht_freigegeben"
 
 

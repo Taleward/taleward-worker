@@ -27,6 +27,9 @@ import httpx
 from taleward_worker import APP_REPO, VERSION, freigabe, pfade
 
 
+MAX_INSTALLER = 400 * 1024 ** 2  # der Installer hat etwa 33 MB
+
+
 def neuer(a: str | None, b: str | None) -> bool:
     def tupel(v):
         try:
@@ -153,11 +156,16 @@ class Aktualisierung:
             geladen = 0
             with ziel.open("wb") as datei:
                 for block in r.iter_bytes(1024 * 256):
+                    geladen += len(block)
+                    if geladen > MAX_INSTALLER:  # nie mehr auf die Platte, als ein Installer groß sein kann
+                        break
                     h.update(block)
                     datei.write(block)
-                    geladen += len(block)
                     if gesamt:
                         self.anteil = min(0.99, geladen / gesamt)
+        if geladen > MAX_INSTALLER:
+            ziel.unlink(missing_ok=True)
+            raise RuntimeError("Die Datei ist größer als ein Installer sein kann – Update verworfen.")
         if h.hexdigest() != soll:
             ziel.unlink(missing_ok=True)
             raise RuntimeError("Prüfsumme stimmt nicht mit der Freigabe überein – Update verworfen.")
